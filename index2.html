@@ -1,0 +1,2080 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>MAMATA - ASHA Notification Center</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    
+    <!-- Babel for JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <style>
+        /* Custom Animations */
+        @keyframes scan {
+            0% { top: 0; }
+            50% { top: 100%; }
+            100% { top: 0; }
+        }
+        @keyframes growUp {
+            from { height: 0; }
+            to { height: 100%; }
+        }
+        .animate-spin-slow {
+            animation: spin 3s linear infinite;
+        }
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+        /* Hide scrollbar for clean UI */
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .no-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 h-screen w-full overflow-hidden select-none">
+    <div id="root" class="h-full w-full"></div>
+
+    <script type="text/babel">
+        // --- ICON BRIDGE: Convert Lucide global to React Components ---
+        const LucideIcons = Object.keys(lucide.icons).reduce((acc, iconName) => {
+            acc[iconName] = ({ size = 24, className = "", ...props }) => {
+                const iconDef = lucide.icons[iconName];
+                if (!iconDef) return null;
+                
+                // Lucide structure: [tag, attrs, children]
+                // We construct the inner SVG paths based on the definition
+                const children = iconDef.map(([tag, attrs], i) => (
+                    React.createElement(tag, { ...attrs, key: i })
+                ));
+
+                return React.createElement('svg', {
+                    ...props,
+                    xmlns: "http://www.w3.org/2000/svg",
+                    width: size,
+                    height: size,
+                    viewBox: "0 0 24 24",
+                    fill: "none",
+                    stroke: "currentColor",
+                    strokeWidth: 2,
+                    strokeLinecap: "round",
+                    strokeLinejoin: "round",
+                    className: className
+                }, children);
+            };
+            return acc;
+        }, {});
+
+        // Destructure icons used in the app
+        const { 
+            Volume2, Check, AlertTriangle, ChevronRight, Menu, Save, Activity, Phone, Plus, Users, 
+            Calendar, Sparkles, X, MessageCircle, ArrowLeft, Heart, Mic, Send, Award, TrendingUp, 
+            DownloadCloud, BookOpen, LogOut, UserCircle, QrCode, ShieldCheck, MapPin, Clock, FileText, 
+            StopCircle, Scan, Lock, ArrowRight, KeyRound, Search, Filter, Stethoscope, Siren, Edit, 
+            Bell, PieChart, BarChart2, Globe, Landmark, Wifi, WifiOff, Cloud, CloudOff, RefreshCw, 
+            Info, Bluetooth, Truck, Package, Syringe, ClipboardList, Ambulance, Link, PlayCircle, 
+            Video, Gamepad2, GraduationCap, Star, Headphones, Wallet, Banknote, CreditCard, CheckCircle, 
+            ShieldAlert, FileBadge, Megaphone, HeartHandshake, Baby, Briefcase, Umbrella, Droplet 
+        } = LucideIcons;
+
+        const { useState, useEffect, useRef } = React;
+
+        // --- APP CODE START ---
+        
+        // --- CONFIGURATION ---
+        const RISK_WEIGHTS = {
+            ANAEMIA: 20, EDEMA: 15, HTN: 25, BLEEDING: 25, PAIN: 20,
+            CONTRACTIONS: 30, FEVER: 15, MENTAL: 10, AGE_RISK: 5, FIRST_PREG: 5, PREV_COMP: 10
+        };
+
+        // New Medically Accurate Anaemia Scale
+        const ANAEMIA_SCALE = [
+            { id: 'optimal', label: '1. Optimal', sub: 'No Dose', color: '#8B0000', textColor: 'white', risk: 0 },      // Dark Red
+            { id: 'acceptable', label: '2. Acceptable', sub: 'No Dose', color: '#D32F2F', textColor: 'white', risk: 0 }, // Red
+            { id: 'borderline', label: '3. Borderline', sub: 'Dose?', color: '#EF5350', textColor: 'white', risk: 15 }, // Light Red
+            { id: 'dangerous', label: '4. Dangerous', sub: 'Dose!', color: '#FFCDD2', textColor: '#880e4f', risk: 25 }, // Pale Pink
+            { id: 'fatal', label: '5. Fatal', sub: 'Dose!', color: '#FFEBEE', textColor: '#880e4f', risk: 35 }          // Very Pale
+        ];
+
+        // Enhanced Symptom Checklist with "ThinkLet" Guides
+        const SYMPTOM_CHECKLIST = [
+            { id: 'anaemia_symptom', weight: 0, hi: 'क्या बहुत थकावट है? या सांस फूल रही है?', en: 'Extreme fatigue? Shortness of breath?', icon: '😫', guide: 'Ask: "Can you walk up stairs without stopping?"' },
+            { id: 'edema', weight: RISK_WEIGHTS.EDEMA, hi: 'पैर, हाथ या चेहरे में सूजन है?', en: 'Swelling in feet, hands, or face?', icon: '🦶', guide: 'Action: Press thumb on shin bone for 5 seconds. If pit remains, select Yes.' },
+            { id: 'htn', weight: RISK_WEIGHTS.HTN, hi: 'सिर में दर्द है? आँखों के सामने अंधेरा आता है?', en: 'Severe headache? Dark spots before eyes?', icon: '🤕', guide: 'Check BP immediately. If >140/90, select Yes.' },
+            { id: 'bleeding', weight: RISK_WEIGHTS.BLEEDING, hi: 'क्या ब्लीडिंग या डिस्चार्ज हो रहा है?', en: 'Vaginal bleeding or discharge?', icon: '🩸', critical: true, guide: 'Ask about pad usage. Any soaking is critical.' },
+            { id: 'pain', weight: RISK_WEIGHTS.PAIN, hi: 'पेट में तेज दर्द या ऐंठन है?', en: 'Severe abdominal pain or cramping?', icon: '🤰', guide: 'Touch abdomen. If hard or very tender, select Yes.' },
+            { id: 'contractions', weight: RISK_WEIGHTS.CONTRACTIONS, hi: 'क्या रुक-रुक कर दर्द (contractions) हो रहा है?', en: 'Having regular contractions?', icon: '⏱️', critical: true, guide: 'Time it: More than 2 pains in 10 minutes?' },
+            { id: 'fever', weight: RISK_WEIGHTS.FEVER, hi: 'बुखार है? पेशाब में जलन है?', en: 'Fever? Burning urination?', icon: '🌡️', guide: 'Check temperature with thermometer. Look for dark urine.' },
+            { id: 'mental', weight: RISK_WEIGHTS.MENTAL, hi: 'क्या आप बहुत तनाव या अकेलापन महसूस कर रही हैं?', en: 'Feeling very stressed or alone?', icon: '🧠', guide: 'Observation: Is she crying or very silent? Ask about sleep.' }
+        ];
+
+        // Initial Inventory State
+        const INITIAL_INVENTORY = {
+            ifa: { id: 'ifa', name: 'IFA Red Tablets', count: 120, unit: 'strips', min: 50, icon: <Package size={20}/> },
+            calc: { id: 'calc', name: 'Calcium Tablets', count: 80, unit: 'strips', min: 40, icon: <Package size={20}/> },
+            kit: { id: 'kit', name: 'Pregnancy Test Kits', count: 3, unit: 'kits', min: 5, icon: <Stethoscope size={20}/> }, // Low Stock
+            ors: { id: 'ors', name: 'ORS Packets', count: 45, unit: 'packets', min: 20, icon: <Activity size={20}/> }
+        };
+
+        // Training Data Mock
+        const TRAINING_MODULES = [
+            { id: 1, title: 'Identifying PPH', type: 'audio', duration: '5 min', completed: true },
+            { id: 2, title: 'Safe Delivery Basics', type: 'audio', duration: '8 min', completed: false },
+            { id: 3, title: 'Newborn Care', type: 'video', duration: '12 min', completed: false },
+        ];
+
+        const ECHO_SESSIONS = [
+            { id: 1, topic: 'Managing High-Risk Anaemia', time: 'Today, 2:00 PM', expert: 'Dr. R. Mehta', status: 'live' },
+            { id: 2, topic: 'Diabetes in Pregnancy', time: 'Tomorrow, 11:00 AM', expert: 'Dr. S. Khan', status: 'upcoming' },
+        ];
+
+        // Financial Data Mock
+        const INITIAL_TRANSACTIONS = [
+            { id: 1, desc: 'Home Visit - Suman', date: 'Today', amount: 50, status: 'pending', type: 'incentive' },
+            { id: 2, desc: 'Complete ANC - Priya', date: 'Yesterday', amount: 300, status: 'credited', type: 'incentive' },
+            { id: 3, desc: 'Fixed Honorarium (Oct)', date: '01 Nov', amount: 4500, status: 'credited', type: 'salary' },
+            { id: 4, desc: 'Mobilization - Polio', date: '30 Oct', amount: 150, status: 'credited', type: 'incentive' },
+        ];
+
+        // Outcome Feedback Mock Data
+        const OUTCOME_FEEDBACK = [
+            { id: 1, title: 'Safe Delivery!', desc: 'Suman delivered a healthy baby boy (2.8kg). Mother & child are safe.', date: '2 hrs ago', type: 'success', icon: <Baby size={16}/> },
+            { id: 2, title: 'Referral Update', desc: 'Radha reached DH Hospital. BP Stabilized.', date: 'Yesterday', type: 'info', icon: <Landmark size={16}/> }
+        ];
+
+        const HospitalIcon = ({size}) => <Landmark size={size}/>;
+
+        // Updated Mock Data
+        const INITIAL_MOTHERS = [
+        { 
+            id: 101, 
+            name: "Suman", 
+            age: 24, 
+            weeks: 29, 
+            lastVisit: "2 days ago", 
+            image: "SU", 
+            history: "G1P0", 
+            village: "Malviya Nagar", 
+            address: "Malviya Nagar, konch Baba samosa bali gali", 
+            phone: "09236096068", 
+            risk: "high", 
+            anemia: "severe",
+            dob: "N/A",
+            lmp: "2025-05-22",
+            edd: "2026-02-21",
+            weight: "54",
+            bp: "100",
+            hemoglobin: "6.5" 
+        },
+        { id: 1, name: "Seema Devi", age: 28, weeks: 30, lastVisit: "3 days ago", image: "SD", history: "G3P2L2", village: "Nandgaon", phone: "9876543210", risk: "high", anemia: "severe", address: "House 22, Nandgaon", lmp: "2025-04-10", edd: "2026-01-15", weight: "52", bp: "120/80", hemoglobin: "9.2" },
+        { id: 2, name: "Priya Sharma", age: 17, weeks: 32, lastVisit: "10 days ago", image: "PS", history: "G1P0", village: "Sonbardi", phone: "9876543211", risk: "low", anemia: "none", address: "Near Well, Sonbardi", lmp: "2025-03-25", edd: "2025-12-30", weight: "48", bp: "110/70", hemoglobin: "11.5" },
+        { id: 3, name: "Radha Singh", age: 35, weeks: 24, lastVisit: "1 week ago", image: "RS", history: "G4P3", village: "Nandgaon", phone: "9876543212", risk: "moderate", anemia: "mild", address: "Main Road, Nandgaon", lmp: "2025-06-15", edd: "2026-03-22", weight: "60", bp: "130/85", hemoglobin: "10.1" },
+        ];
+
+        const apiKey = ""; 
+
+        // --- API HELPERS ---
+        const callGeminiText = async (prompt) => {
+            try {
+                const response = await fetch(
+                `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`,
+                { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }) }
+                );
+                if (!response.ok) throw new Error("API call failed");
+                const data = await response.json();
+                return data.candidates?.[0]?.content?.parts?.[0]?.text || "Error generating response.";
+            } catch (e) { return "Error: Could not connect to AI service."; }
+        };
+
+        const callGeminiTTS = async (text, lang) => {
+            try {
+                const voiceName = lang === 'hi' ? "Puck" : "Kore"; 
+                const response = await fetch(
+                `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=${apiKey}`,
+                {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                    contents: [{ parts: [{ text: text }] }],
+                    generationConfig: { responseModalities: ["AUDIO"], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voiceName } } } },
+                    }),
+                }
+                );
+                if (!response.ok) throw new Error("TTS call failed");
+                const data = await response.json();
+                const audioContent = data.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+                if (audioContent) {
+                return `data:audio/mp3;base64,${audioContent}`; 
+                }
+                return null;
+            } catch (e) { return null; }
+        };
+
+        // --- CHATBOT COMPONENT ---
+        const AskDidiModal = ({ isOpen, onClose, lang }) => {
+            const [query, setQuery] = useState("");
+            const [response, setResponse] = useState("");
+            const [loading, setLoading] = useState(false);
+            const [mode, setMode] = useState("text"); 
+            const [isListening, setIsListening] = useState(false);
+            const audioRef = useRef(null);
+
+            useEffect(() => {
+                if (!isOpen || mode === 'text') {
+                    if (audioRef.current) {
+                        audioRef.current.pause();
+                        audioRef.current.currentTime = 0;
+                    }
+                }
+            }, [isOpen, mode]);
+
+            const handleSpeechInput = () => {
+                if (!('webkitSpeechRecognition' in window)) {
+                    alert("Voice input not supported in this browser. Please use Chrome.");
+                    return;
+                }
+                const recognition = new window.webkitSpeechRecognition();
+                recognition.lang = lang === 'hi' ? 'hi-IN' : 'en-US';
+                recognition.continuous = false;
+                
+                recognition.onstart = () => setIsListening(true);
+                recognition.onend = () => setIsListening(false);
+                
+                recognition.onresult = (event) => {
+                    const text = event.results[0][0].transcript;
+                    setQuery(text);
+                    handleAsk(text, true); 
+                };
+                
+                recognition.start();
+            };
+
+            const handleAsk = async (textOverride = null, autoPlayTTS = false) => {
+                const inputText = textOverride || query;
+                if (!inputText.trim()) return;
+                
+                setLoading(true);
+                setResponse(""); 
+                if (audioRef.current) audioRef.current.pause();
+
+                const prompt = `Act as a senior ASHA trainer (Didi). User asks: "${inputText}". Answer in simple ${lang === 'hi' ? 'Hindi' : 'English'}. Keep it medical but simple. Max 40 words.`;
+                const res = await callGeminiText(prompt);
+                setResponse(res);
+                setLoading(false);
+
+                if (autoPlayTTS && res) {
+                    const audioData = await callGeminiTTS(res, lang);
+                    if (audioData) {
+                        // Audio playback would happen here
+                    }
+                }
+            };
+
+            if (!isOpen) return null;
+
+            return (
+                <div className="fixed inset-0 bg-black/60 z-50 flex items-end sm:items-center justify-center p-4 animate-in fade-in duration-300 backdrop-blur-sm">
+                <div className="bg-white w-full max-w-sm rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[80vh] transition-all transform scale-100 animate-in slide-in-from-bottom-8 zoom-in-95 duration-300">
+                    <div className="bg-gradient-to-r from-pink-600 to-purple-600 p-4 flex justify-between items-center text-white">
+                    <div className="flex items-center gap-2 font-bold"><Sparkles size={18} className="text-yellow-300 animate-spin-slow"/> Ask Didi (AI)</div>
+                    <div className="flex items-center gap-2">
+                        <button onClick={() => setMode(mode === 'text' ? 'voice' : 'text')} className="bg-white/20 p-1.5 rounded-full hover:bg-white/30 transition text-xs font-bold px-3">
+                            {mode === 'text' ? '🎙️ Go Live' : '⌨️ Text'}
+                        </button>
+                        <button onClick={onClose}><X size={24}/></button>
+                    </div>
+                    </div>
+                    <div className="p-4 overflow-y-auto flex-1 bg-gray-50 flex flex-col">
+                    {mode === 'voice' && (
+                        <div className="flex-1 flex flex-col items-center justify-center space-y-8 py-8">
+                            <div className={`relative w-32 h-32 rounded-full flex items-center justify-center transition-all duration-500 ${isListening ? 'bg-red-100 scale-110' : 'bg-pink-100'}`}>
+                                {isListening && <div className="absolute inset-0 rounded-full bg-red-400 animate-ping opacity-20"></div>}
+                                <button onClick={handleSpeechInput} className={`w-24 h-24 rounded-full flex items-center justify-center text-white shadow-lg transition-transform active:scale-95 ${isListening ? 'bg-red-500' : 'bg-gradient-to-r from-pink-500 to-purple-500'}`}>
+                                    {isListening ? <StopCircle size={40} /> : <Mic size={40} />}
+                                </button>
+                            </div>
+                            <div className="text-center space-y-2">
+                                <h3 className="text-lg font-bold text-gray-800 animate-pulse">
+                                    {isListening ? "Listening..." : loading ? "Thinking..." : "Tap to Speak"}
+                                </h3>
+                                <p className="text-sm text-gray-500 px-6">
+                                    {isListening ? "Go ahead, ask your question..." : query ? `"${query}"` : "Ask about symptoms, diet, or risks."}
+                                </p>
+                            </div>
+                            {response && !loading && (
+                                <div className="bg-white p-4 rounded-xl border-l-4 border-purple-500 shadow-sm w-full animate-in slide-in-from-bottom-4 duration-500">
+                                    <p className="text-gray-800 font-medium leading-relaxed">{response}</p>
+                                    <div className="mt-2 flex items-center gap-2 text-xs text-purple-600 font-bold">
+                                        <Volume2 size={12} className="animate-pulse"/> Speaking...
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    )}
+                    {mode === 'text' && (
+                        <>
+                            {!response && !loading && (
+                                <div className="text-center text-gray-400 mt-10">
+                                <MessageCircle size={48} className="mx-auto mb-2 opacity-20"/>
+                                <p>{lang === 'hi' ? 'कोई भी सवाल पूछें...' : 'Ask any health question...'}</p>
+                                </div>
+                            )}
+                            {loading && <div className="flex justify-center p-4"><div className="w-8 h-8 border-4 border-pink-500 border-t-transparent rounded-full animate-spin"></div></div>}
+                            {response && <div className="bg-white p-4 rounded-xl shadow-sm text-gray-800 border border-gray-100 leading-relaxed animate-in fade-in slide-in-from-bottom-2">{response}</div>}
+                        </>
+                    )}
+                    </div>
+                    {mode === 'text' && (
+                        <div className="p-3 border-t bg-white flex gap-2">
+                        <input 
+                            value={query} onChange={e => setQuery(e.target.value)} 
+                            placeholder={lang === 'hi' ? "यहाँ लिखें..." : "Type here..."}
+                            className="flex-1 bg-gray-100 rounded-full px-4 py-2 focus:outline-none focus:ring-2 focus:ring-pink-500 transition-all"
+                        />
+                        <button onClick={() => handleAsk()} className="bg-pink-600 text-white p-3 rounded-full hover:bg-pink-700 hover:scale-105 transition-all"><Send size={18}/></button>
+                        </div>
+                    )}
+                    <audio ref={audioRef} className="hidden" />
+                </div>
+                </div>
+            );
+        };
+
+        // --- QR SCANNER COMPONENT ---
+        const QrScannerOverlay = ({ isOpen, onClose, onScan }) => {
+            const [scanning, setScanning] = useState(true);
+
+            useEffect(() => {
+                if (isOpen) {
+                    setScanning(true);
+                    const timer = setTimeout(() => {
+                        setScanning(false);
+                        onScan({
+                            name: "Anjali Gupta",
+                            age: "24",
+                            weeks: "16",
+                            id: "MH-NAND-055",
+                            phone: "9876500000",
+                            village: "Nandgaon",
+                            lmp: "2025-09-01",
+                            history: "G1P0"
+                        });
+                    }, 2500);
+                    return () => clearTimeout(timer);
+                }
+            }, [isOpen]);
+
+            if (!isOpen) return null;
+
+            return (
+                <div className="fixed inset-0 bg-black z-50 flex flex-col items-center justify-center animate-in fade-in duration-300">
+                    <div className="absolute top-4 right-4">
+                        <button onClick={onClose} className="text-white p-2 bg-white/20 rounded-full hover:bg-white/40 transition"><X size={24}/></button>
+                    </div>
+                    <div className="w-64 h-64 border-2 border-white rounded-lg relative overflow-hidden mb-8 shadow-[0_0_50px_rgba(0,255,0,0.3)]">
+                        <div className="absolute inset-0 border-4 border-green-500 rounded-lg opacity-50"></div>
+                        {scanning && (
+                            <div className="absolute top-0 left-0 w-full h-1 bg-red-500 animate-[scan_2s_infinite] shadow-[0_0_15px_rgba(255,0,0,0.8)]"></div>
+                        )}
+                        <div className="absolute inset-0 flex items-center justify-center">
+                            <QrCode size={100} className="text-white/20" />
+                        </div>
+                    </div>
+                    <p className="text-white text-lg font-medium animate-pulse">
+                        {scanning ? "Scanning Card..." : "Data Found!"}
+                    </p>
+                    <p className="text-white/60 text-sm mt-2">Align QR code within frame</p>
+                </div>
+            );
+        };
+
+        // --- GOVERNMENT FOOTER COMPONENT ---
+        const GovFooter = () => (
+        <div className="bg-gray-900 text-white p-6 mt-8 text-center rounded-t-3xl relative overflow-hidden animate-in slide-in-from-bottom-4 duration-700">
+            {/* Tiranga Strip */}
+            <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-orange-500 via-white to-green-600"></div>
+            
+            <div className="flex flex-col items-center gap-2 mb-4 mt-2">
+            {/* Emblem Placeholder */}
+            <div className="text-center opacity-90">
+                <Landmark size={32} className="mx-auto text-yellow-500 mb-1" />
+                <div className="text-[10px] font-bold uppercase tracking-widest text-gray-300 font-serif">Satyameva Jayate</div>
+            </div>
+            </div>
+            
+            <h3 className="font-bold text-sm text-white mb-1 uppercase tracking-wide">National Health Mission</h3>
+            <p className="text-[10px] text-gray-400 uppercase tracking-wider mb-6 leading-tight">
+                Ministry of Health & Family Welfare<br/>Government of India
+            </p>
+            
+            <div className="flex justify-center gap-6 text-[10px] text-gray-400 mb-6 font-medium">
+                <a href="#" className="hover:text-white transition-colors border-b border-transparent hover:border-white pb-0.5">mohfw.gov.in</a>
+                <a href="#" className="hover:text-white transition-colors border-b border-transparent hover:border-white pb-0.5">nhm.gov.in</a>
+                <a href="#" className="hover:text-white transition-colors border-b border-transparent hover:border-white pb-0.5">Privacy Policy</a>
+            </div>
+
+            <div className="flex flex-col items-center gap-1 opacity-60">
+                <div className="flex items-center gap-2">
+                    <Globe size={12} />
+                    <span className="text-[10px] uppercase font-bold tracking-widest">Digital India</span>
+                </div>
+                <p className="text-[9px] text-gray-500">Designed & Developed by NIC</p>
+            </div>
+            <p className="text-[9px] text-gray-700 mt-4 font-mono">v11.1 | Notification Center Build</p>
+        </div>
+        );
+
+        // --- NOTIFICATION OVERLAY COMPONENT ---
+        const NotificationOverlay = ({ isOpen, onClose, notifications }) => {
+            if (!isOpen) return null;
+            return (
+                <div className="fixed inset-0 bg-black/60 z-50 flex items-end sm:items-center justify-center p-4 animate-in fade-in duration-300 backdrop-blur-sm">
+                    <div className="bg-white w-full max-w-sm rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[70vh] transition-all transform scale-100 animate-in slide-in-from-bottom-8 zoom-in-95 duration-300">
+                        <div className="bg-gray-100 p-4 flex justify-between items-center border-b border-gray-200">
+                            <h3 className="font-bold text-gray-800 flex items-center gap-2"><Bell size={18} className="text-purple-600"/> Notifications</h3>
+                            <button onClick={onClose}><X size={20} className="text-gray-500"/></button>
+                        </div>
+                        <div className="overflow-y-auto p-4 space-y-3">
+                            {notifications.length === 0 ? (
+                                <div className="text-center text-gray-400 py-8">
+                                    <Bell size={48} className="mx-auto mb-2 opacity-20"/>
+                                    <p>No new notifications</p>
+                                </div>
+                            ) : (
+                                notifications.map((notif, i) => (
+                                    <div key={i} className={`p-3 rounded-xl border flex gap-3 ${notif.critical ? 'bg-red-50 border-red-100' : 'bg-white border-gray-100 shadow-sm'}`}>
+                                        <div className={`p-2 rounded-full h-fit flex items-center justify-center ${notif.colorClass || 'bg-gray-100 text-gray-600'}`}>
+                                            {notif.icon || <Bell size={16}/>}
+                                        </div>
+                                        <div>
+                                            <h4 className={`text-sm font-bold ${notif.critical ? 'text-red-800' : 'text-gray-800'}`}>{notif.title}</h4>
+                                            <p className="text-xs text-gray-600 leading-tight my-1">{notif.desc}</p>
+                                            <p className="text-[10px] text-gray-400">{notif.date || 'Just now'}</p>
+                                        </div>
+                                    </div>
+                                ))
+                            )}
+                        </div>
+                        <button onClick={onClose} className="bg-gray-50 p-3 text-center text-sm font-bold text-purple-600 border-t border-gray-200 hover:bg-gray-100 transition-colors">Close</button>
+                    </div>
+                </div>
+            );
+        };
+
+        function MamataAppQr() {
+            const [screen, setScreen] = useState('splash');
+            const [lang, setLang] = useState('hi');
+            
+            // Offline & Persistence State
+            const [isOnline, setIsOnline] = useState(navigator.onLine);
+            const [mothers, setMothers] = useState(() => {
+                const saved = localStorage.getItem('mamata_mothers');
+                return saved ? JSON.parse(saved) : INITIAL_MOTHERS;
+            });
+            
+            // Inventory State
+            const [inventory, setInventory] = useState(INITIAL_INVENTORY);
+            const [reorderStatus, setReorderStatus] = useState({});
+
+            const [selectedMother, setSelectedMother] = useState(null);
+            
+            // Profile View State
+            const [profileTab, setProfileTab] = useState('analytics'); 
+            const [notificationHistory, setNotificationHistory] = useState([]);
+            
+            // Edit Mode State
+            const [isEditing, setIsEditing] = useState(false);
+
+            // Training & Gamification State
+            const [trainingTab, setTrainingTab] = useState('academy'); 
+            const [trainingModules, setTrainingModules] = useState(TRAINING_MODULES);
+            const [earnedStars, setEarnedStars] = useState(12);
+
+            // Financial State
+            const [financeTab, setFinanceTab] = useState('ledger');
+            const [transactions, setTransactions] = useState(INITIAL_TRANSACTIONS);
+
+            // Credential Multiplier State
+            const [isPlayingDoctor, setIsPlayingDoctor] = useState(false);
+
+            // Notification Center State (New)
+            const [showNotifications, setShowNotifications] = useState(false);
+            const [allNotifications, setAllNotifications] = useState([]);
+
+            // Updated state for new registration options
+            const [newMother, setNewMother] = useState({ 
+                name: '', 
+                age: '', 
+                weeks: '', 
+                phone: '', 
+                village: '', 
+                lmp: '', 
+                gravidity: '', 
+                parity: '',
+                dob: '',
+                edd: '',
+                hemoglobin: '',
+                weight: '',
+                bp: '',
+                isAnaemic: false,
+                isHighRisk: false,
+                riskFactors: '',
+                medicalHistory: ''
+            });
+
+            const [asdtColor, setAsdtColor] = useState(null); 
+            const [symptoms, setSymptoms] = useState({});
+            const [qIndex, setQIndex] = useState(0);
+            const [riskScore, setRiskScore] = useState(0);
+            const [riskLevel, setRiskLevel] = useState('GREEN');
+            const [aiLoading, setAiLoading] = useState(false);
+            const [symptomAnalysis, setSymptomAnalysis] = useState("");
+            const [familyScript, setFamilyScript] = useState("");
+            const [dietPlan, setDietPlan] = useState("");
+            const [emergencyPlan, setEmergencyPlan] = useState(""); 
+            const [showConfetti, setShowConfetti] = useState(false);
+            const [showChat, setShowChat] = useState(false);
+            const [showScanner, setShowScanner] = useState(false);
+
+            // Referral System
+            const [referralStatus, setReferralStatus] = useState(null);
+
+            // Device Sync State
+            const [isDeviceConnecting, setIsDeviceConnecting] = useState(false);
+
+            // Smart Fill State
+            const [smartInput, setSmartInput] = useState("");
+            const [isSmartFilling, setIsSmartFilling] = useState(false);
+            
+            // Dashboard & Search States
+            const [dashboardTab, setDashboardTab] = useState('all'); 
+            const [searchQuery, setSearchQuery] = useState('');
+
+            // Auth State
+            const [loginForm, setLoginForm] = useState({ phone: '', pin: '' });
+            const [signupForm, setSignupForm] = useState({ name: '', phone: '', ashaId: '', pin: '', confirmPin: '', otp: '' });
+            const [otpSent, setOtpSent] = useState(false);
+            const [isOtpLoading, setIsOtpLoading] = useState(false);
+
+            const t = (hi, en) => (lang === 'hi' ? hi : en);
+
+            // --- PERSISTENCE & ONLINE STATUS ---
+            useEffect(() => {
+                localStorage.setItem('mamata_mothers', JSON.stringify(mothers));
+            }, [mothers]);
+
+            useEffect(() => {
+                const handleOnline = () => setIsOnline(true);
+                const handleOffline = () => setIsOnline(false);
+                window.addEventListener('online', handleOnline);
+                window.addEventListener('offline', handleOffline);
+                return () => {
+                    window.removeEventListener('online', handleOnline);
+                    window.removeEventListener('offline', handleOffline);
+                };
+            }, []);
+
+            // Check for auto-reorder & Generate Inventory Notifications
+            useEffect(() => {
+                const newStatus = { ...reorderStatus };
+                const stockAlerts = [];
+
+                Object.values(inventory).forEach(item => {
+                    if (item.count <= item.min) {
+                        if(!newStatus[item.id]) {
+                            newStatus[item.id] = 'ordered';
+                        }
+                        stockAlerts.push({
+                            title: 'Low Stock Alert',
+                            desc: `${item.name} is running low (${item.count} left). Auto-order placed.`,
+                            date: 'Just now',
+                            critical: true,
+                            colorClass: 'bg-red-100 text-red-600',
+                            icon: <Package size={16}/>
+                        });
+                    }
+                });
+                setReorderStatus(newStatus);
+                
+                // Combine notifications
+                const pendingPayments = transactions.filter(t => t.status === 'pending').map(t => ({
+                    title: 'Payment Pending',
+                    desc: `${t.desc}: ₹${t.amount} is pending approval.`,
+                    date: t.date,
+                    colorClass: 'bg-yellow-100 text-yellow-600',
+                    icon: <Wallet size={16}/>
+                }));
+
+                const outcomeNotifs = OUTCOME_FEEDBACK.map(f => ({
+                    ...f,
+                    colorClass: 'bg-green-100 text-green-600'
+                }));
+
+                setAllNotifications([...stockAlerts, ...pendingPayments, ...outcomeNotifs]);
+
+            }, [inventory, transactions]);
+
+            useEffect(() => {
+                if (screen === 'splash') {
+                const timer = setTimeout(() => setScreen('login'), 2000);
+                return () => clearTimeout(timer);
+                }
+            }, [screen]);
+
+            // Actions
+            const handleEdit = () => {
+                setIsEditing(true);
+                let g = '1', p = '0';
+                if (selectedMother.history) {
+                    const matches = selectedMother.history.match(/G(\d+)P(\d+)/);
+                    if (matches) { g = matches[1]; p = matches[2]; }
+                }
+
+                setNewMother({
+                    name: selectedMother.name,
+                    age: selectedMother.age,
+                    weeks: selectedMother.weeks,
+                    phone: selectedMother.phone,
+                    village: selectedMother.address || selectedMother.village, 
+                    lmp: selectedMother.lmp,
+                    gravidity: g,
+                    parity: p,
+                    dob: selectedMother.dob === 'N/A' ? '' : selectedMother.dob,
+                    edd: selectedMother.edd,
+                    hemoglobin: selectedMother.hemoglobin,
+                    weight: selectedMother.weight,
+                    bp: selectedMother.bp,
+                    isAnaemic: selectedMother.anemia === 'severe' || selectedMother.anemia === 'moderate',
+                    isHighRisk: selectedMother.risk === 'high',
+                    riskFactors: '',
+                    medicalHistory: ''
+                });
+                setScreen('registration');
+            };
+
+            const handleRegister = () => {
+                if (!newMother.name || !newMother.phone) { alert(t('कृपया नाम और मोबाइल भरें', 'Please enter Name and Mobile')); return; }
+                
+                let calculatedRisk = newMother.isHighRisk ? 'high' : 'low';
+                let calculatedAnemia = newMother.isAnaemic ? 'moderate' : 'none';
+
+                if (isEditing) {
+                    const updatedMother = {
+                        ...selectedMother,
+                        name: newMother.name,
+                        age: parseInt(newMother.age) || selectedMother.age,
+                        weeks: parseInt(newMother.weeks) || selectedMother.weeks,
+                        phone: newMother.phone,
+                        village: newMother.village,
+                        address: newMother.village,
+                        lmp: newMother.lmp,
+                        edd: newMother.edd,
+                        dob: newMother.dob || "N/A",
+                        history: `G${newMother.gravidity}P${newMother.parity}`,
+                        hemoglobin: newMother.hemoglobin,
+                        weight: newMother.weight,
+                        bp: newMother.bp,
+                        risk: calculatedRisk,
+                        anemia: calculatedAnemia,
+                    };
+                    
+                    setMothers(mothers.map(m => m.id === selectedMother.id ? updatedMother : m));
+                    setSelectedMother(updatedMother);
+                    setIsEditing(false);
+                    setScreen('profile');
+                    alert("✅ " + t("विवरण अपडेट किए गए", "Details Updated"));
+                } else {
+                    const newEntry = { 
+                        id: mothers.length + 101, 
+                        name: newMother.name, 
+                        age: parseInt(newMother.age) || 25, 
+                        weeks: parseInt(newMother.weeks) || 12, 
+                        lastVisit: t("अभी जुड़ा", "Just Added"), 
+                        image: newMother.name.slice(0, 2).toUpperCase(), 
+                        village: newMother.village || "Unknown", 
+                        phone: newMother.phone || "N/A", 
+                        history: `G${newMother.gravidity || 1}P${newMother.parity || 0}`, 
+                        risk: calculatedRisk, 
+                        anemia: calculatedAnemia,
+                        hemoglobin: newMother.hemoglobin || "11.0",
+                        bp: newMother.bp || "120/80",
+                        address: newMother.village 
+                    };
+                    
+                    setMothers([...mothers, newEntry]);
+                    setScreen('home');
+                    
+                    const newTxn = { id: Date.now(), desc: `Registration - ${newMother.name}`, date: 'Just Now', amount: 150, status: 'pending', type: 'incentive' };
+                    setTransactions([newTxn, ...transactions]);
+                    alert("✅ " + t("नई माता जोड़ी गई। प्रोत्साहन ₹150 लंबित।", "New Mother Added. ₹150 Incentive Pending."));
+                }
+
+                setNewMother({ 
+                    name: '', age: '', weeks: '', phone: '', village: '', lmp: '', gravidity: '', parity: '',
+                    dob: '', edd: '', hemoglobin: '', weight: '', bp: '', isAnaemic: false, isHighRisk: false, riskFactors: '', medicalHistory: ''
+                });
+            };
+
+            const handleSmartFill = async () => {
+                if (!smartInput.trim()) return;
+                setIsSmartFilling(true);
+                
+                if (!isOnline) {
+                    alert("Smart Fill requires internet connection.");
+                    setIsSmartFilling(false);
+                    return;
+                }
+
+                const prompt = `Extract patient details from this text into a JSON object with these exact keys: name, age, weeks, phone, village, hemoglobin, weight, bp, lmp (YYYY-MM-DD), gravidity, parity, medicalHistory. If a value is missing, use null. Text: "${smartInput}". Return ONLY valid JSON, no markdown.`;
+                
+                try {
+                    const result = await callGeminiText(prompt);
+                    const cleanResult = result.replace(/```json|```/g, '').trim();
+                    const data = JSON.parse(cleanResult);
+                    
+                    setNewMother(prev => ({
+                        ...prev,
+                        name: data.name || prev.name,
+                        age: data.age || prev.age,
+                        weeks: data.weeks || prev.weeks,
+                        phone: data.phone || prev.phone,
+                        village: data.village || prev.village,
+                        hemoglobin: data.hemoglobin || prev.hemoglobin,
+                        weight: data.weight || prev.weight,
+                        bp: data.bp || prev.bp,
+                        lmp: data.lmp || prev.lmp,
+                        gravidity: data.gravidity || prev.gravidity,
+                        parity: data.parity || prev.parity,
+                        medicalHistory: data.medicalHistory || prev.medicalHistory
+                    }));
+                    setSmartInput("");
+                    alert(t("✅ विवरण स्वचालित रूप से भर दिए गए", "✅ Details auto-filled successfully"));
+                } catch (e) {
+                    console.error(e);
+                    alert(t("त्रुटि: पुनः प्रयास करें", "Error parsing details. Try again."));
+                } finally {
+                    setIsSmartFilling(false);
+                }
+            };
+
+            const handleDeviceSync = () => {
+                setIsDeviceConnecting(true);
+                setTimeout(() => {
+                    setNewMother(prev => ({
+                        ...prev,
+                        hemoglobin: '9.8',
+                        bp: '128/82',
+                        weight: '56'
+                    }));
+                    setIsDeviceConnecting(false);
+                    alert(t("✅ डिवाइस कनेक्टेड: डेटा सिंक हो गया!", "✅ Device Connected: Data Synced!"));
+                }, 2500);
+            };
+
+            const handleScanSuccess = (data) => {
+                setShowScanner(false);
+                setNewMother({
+                    ...newMother,
+                    name: data.name,
+                    age: data.age,
+                    weeks: data.weeks,
+                    phone: data.phone,
+                    village: data.village,
+                    lmp: data.lmp,
+                    gravidity: "1",
+                    parity: "0"
+                });
+                setScreen('registration');
+                alert(`Scanned: ${data.name} (ID: ${data.id})`);
+            };
+
+            const handleLogin = () => {
+                if (loginForm.phone && loginForm.pin) {
+                setScreen('home');
+                } else {
+                alert(t("कृपया फोन और पिन भरें", "Please enter Phone and PIN"));
+                }
+            };
+
+            const handleSendOtp = () => {
+                if (!signupForm.name || !signupForm.phone || !signupForm.pin || !signupForm.confirmPin) {
+                    alert(t("कृपया सभी विवरण भरें", "Please fill all details"));
+                    return;
+                }
+                if (signupForm.pin !== signupForm.confirmPin) {
+                    alert(t("पिन मेल नहीं खाते", "PINs do not match"));
+                    return;
+                }
+                setIsOtpLoading(true);
+                setTimeout(() => {
+                    setIsOtpLoading(false);
+                    setOtpSent(true);
+                }, 2000);
+            };
+
+            const handleVerifyOtp = () => {
+                if(signupForm.otp.length === 4) {
+                    setScreen('home');
+                } else {
+                    alert(t("कृपया सही ओटीपी दर्ज करें", "Please enter valid OTP"));
+                }
+            };
+
+            const calculateRisk = (finalSymptoms) => {
+                let score = 0; 
+                const selectedScale = ANAEMIA_SCALE.find(s => s.id === asdtColor);
+                if (selectedScale) {
+                    score += selectedScale.risk;
+                }
+                const symptomsToUse = finalSymptoms || symptoms;
+                Object.keys(symptomsToUse).forEach(key => { if (symptomsToUse[key]) score += (SYMPTOM_CHECKLIST.find(s => s.id === key)?.weight || 0); });
+                if (selectedMother && (selectedMother.age < 18 || selectedMother.age > 35)) score += RISK_WEIGHTS.AGE_RISK;
+                
+                setRiskScore(score);
+                if (score >= 61) setRiskLevel('RED');
+                else if (score >= 31) setRiskLevel('ORANGE');
+                else if (score >= 11) setRiskLevel('YELLOW');
+                else setRiskLevel('GREEN');
+                
+                setScreen('result');
+                setFamilyScript("");
+                setDietPlan("");
+                setEmergencyPlan(""); 
+                setReferralStatus(null);
+                setIsPlayingDoctor(false); // Reset Doctor Audio
+                setShowConfetti(true);
+                setTimeout(() => setShowConfetti(false), 3000);
+            };
+
+            const handleSymptomAnswer = (answer) => {
+                const currentQ = SYMPTOM_CHECKLIST[qIndex];
+                const newSymptoms = { ...symptoms, [currentQ.id]: answer };
+                setSymptoms(newSymptoms);
+                if (qIndex < SYMPTOM_CHECKLIST.length - 1) setQIndex(qIndex + 1);
+                else calculateRisk(newSymptoms);
+            };
+
+            const handleReferral = () => {
+                setReferralStatus("processing");
+                setTimeout(() => {
+                    setReferralStatus("completed");
+                }, 2500);
+            };
+
+            const handleSaveVisit = () => {
+                const newTxn = { id: Date.now(), desc: `Visit Checkup - ${selectedMother?.name || 'Mother'}`, date: 'Just Now', amount: 50, status: 'pending', type: 'incentive' };
+                setTransactions([newTxn, ...transactions]);
+                
+                setScreen('home'); 
+                setSelectedMother(null);
+                alert(t("✅ विज़िट सेव और प्रोत्साहन ₹50 जोड़ा गया", "✅ Visit Saved & ₹50 Incentive Added"));
+            };
+
+            const handlePlayDoctorAudio = () => {
+                setIsPlayingDoctor(true);
+                setTimeout(() => setIsPlayingDoctor(false), 5000); // Simulate 5s audio
+            };
+
+            // AI Functions
+            const analyzeSymptomsAI = async () => {
+                const active = Object.keys(symptoms).filter(k => symptoms[k]).map(k => SYMPTOM_CHECKLIST.find(s => s.id === k)?.en).filter(Boolean);
+                if (active.length === 0) { setSymptomAnalysis(t("कोई लक्षण नहीं", "No symptoms")); return; }
+                setAiLoading(true);
+                const text = await callGeminiText(`Patient symptoms: ${active.join(', ')}. Anaemia: ${asdtColor}. Generate 2 critical follow-up questions in ${lang === 'hi' ? 'Hindi' : 'English'}. Max 30 words.`);
+                setSymptomAnalysis(text);
+                setAiLoading(false);
+            };
+
+            const generateFamilyScript = async () => {
+                setAiLoading(true);
+                const text = await callGeminiText(`Script in ${lang === 'hi' ? 'Hindi' : 'English'} for ASHA to husband. Patient: ${selectedMother.name}, Risk: ${riskLevel}. Goal: Go to hospital. Tone: Serious but caring. Max 50 words.`);
+                setFamilyScript(text);
+                setAiLoading(false);
+            };
+
+            const generateDietPlan = async () => {
+                setAiLoading(true);
+                const active = Object.keys(symptoms).filter(k => symptoms[k]).map(k => SYMPTOM_CHECKLIST.find(s => s.id === k)?.en);
+                const prompt = `Create a cheap, local rural Indian diet plan in ${lang === 'hi' ? 'Hindi' : 'English'} for a pregnant woman. Issues: ${asdtColor || 'None'} anaemia, ${active.join(', ')}. Return ONLY a JSON array (no markdown) with keys: "time", "meal", "benefit". Example: [{"time": "Morning", "meal": "Roti", "benefit": "Energy"}].`;
+                const text = await callGeminiText(prompt);
+                setDietPlan(text);
+                setAiLoading(false);
+            };
+
+            const generateEmergencyPlan = async () => {
+                setAiLoading(true);
+                const active = Object.keys(symptoms).filter(k => symptoms[k]).map(k => SYMPTOM_CHECKLIST.find(s => s.id === k)?.en);
+                const prompt = `The patient is a pregnant woman in rural India. Risk Level: ${riskLevel}. Symptoms: ${active.join(', ')}. Anaemia Level: ${asdtColor}. Provide a 3-step immediate emergency response plan for the ASHA worker in ${lang === 'hi' ? 'Hindi' : 'English'}. Keep it extremely brief, imperative, and actionable. Max 40 words total.`;
+                const text = await callGeminiText(prompt);
+                setEmergencyPlan(text);
+                setAiLoading(false);
+            };
+
+            const handleSendReminder = () => {
+                const newNotif = {
+                    id: Date.now(),
+                    type: 'SMS',
+                    date: new Date().toLocaleDateString(),
+                    time: new Date().toLocaleTimeString(),
+                    message: `Reminder sent to ${selectedMother.name}`
+                };
+                setNotificationHistory([newNotif, ...notificationHistory]);
+                alert(t("✅ रिमाइंडर भेजा गया!", "✅ Reminder sent successfully!"));
+            };
+
+            // --- UPDATED HEADER WITH NOTIFICATION ICON ---
+            const Header = ({ title, backAction, onMenuClick }) => (
+                <div className="bg-gradient-to-r from-pink-600 to-purple-600 text-white p-4 flex justify-between items-center shadow-lg sticky top-0 z-20 rounded-b-xl transition-all duration-300">
+                <div className="flex items-center gap-3">
+                    {backAction ? <button onClick={backAction} className="hover:scale-110 transition-transform"><ArrowLeft size={24}/></button> : <button onClick={onMenuClick} className="hover:scale-110 transition-transform"><Menu size={24} /></button>}
+                    <h1 className="text-xl font-bold truncate animate-in slide-in-from-left-4 fade-in">{title}</h1>
+                </div>
+                <div className="flex gap-3 items-center">
+                    {/* Connection Status */}
+                    <div className={`p-1.5 rounded-full flex items-center justify-center transition-colors ${isOnline ? 'bg-green-500/20 text-green-200' : 'bg-red-500/20 text-red-200 animate-pulse'}`}>
+                        {isOnline ? <Cloud size={16} /> : <CloudOff size={16} />}
+                    </div>
+                    
+                    {/* Notification Icon */}
+                    <button onClick={() => setShowNotifications(true)} className="relative p-1.5 rounded-full bg-white/20 hover:bg-white/30 transition-colors">
+                        <Bell size={20} />
+                        {allNotifications.length > 0 && (
+                            <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] font-bold w-4 h-4 rounded-full flex items-center justify-center animate-bounce">
+                                {allNotifications.length}
+                            </span>
+                        )}
+                    </button>
+
+                    <button onClick={() => setLang(l => l === 'hi' ? 'en' : 'hi')} className="bg-white/20 px-3 py-1 rounded-full text-xs font-bold hover:bg-white/30 transition-colors">{lang === 'hi' ? 'हिंदी' : 'ENG'}</button>
+                </div>
+                </div>
+            );
+
+            // --- MISSING RENDER FUNCTIONS ---
+            
+            const renderInventory = () => (
+                <div key="inventory" className="p-4 space-y-4 pb-24 animate-in slide-in-from-right-full duration-500">
+                {Object.values(inventory).map(item => (
+                    <div key={item.id} className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex justify-between items-center">
+                    <div className="flex items-center gap-4">
+                        <div className={`p-3 rounded-full ${item.count <= item.min ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'}`}>
+                        <Package size={24} />
+                        </div>
+                        <div>
+                        <h3 className="font-bold text-gray-800">{item.name}</h3>
+                        <p className={`text-sm font-medium ${item.count <= item.min ? 'text-red-500' : 'text-gray-500'}`}>
+                            {item.count} {item.unit} left
+                        </p>
+                        </div>
+                    </div>
+                    {reorderStatus[item.id] === 'ordered' ? (
+                        <span className="text-xs bg-yellow-100 text-yellow-800 px-2 py-1 rounded font-bold">Ordered</span>
+                    ) : (
+                        <button onClick={() => setReorderStatus({...reorderStatus, [item.id]: 'ordered'})} className="bg-blue-600 text-white p-2 rounded-lg">
+                            <RefreshCw size={16} />
+                        </button>
+                    )}
+                    </div>
+                ))}
+                <GovFooter />
+                </div>
+            );
+
+            const renderASDT = () => (
+                <div key="asdt" className="p-6 h-full flex flex-col items-center justify-center animate-in zoom-in duration-500">
+                <h2 className="text-2xl font-bold text-gray-800 mb-6 text-center">{t('एनीमिया जाँच (A-SDT)', 'Anemia Screening')}</h2>
+                <p className="text-gray-500 text-center mb-8">{t('जीभ का रंग मिलाएँ', 'Match Tongue Color')}</p>
+                
+                <div className="space-y-4 w-full max-w-sm">
+                    {ANAEMIA_SCALE.map((scale) => (
+                    <button 
+                        key={scale.id}
+                        onClick={() => { setAsdtColor(scale.id); setQIndex(0); setSymptoms({}); setScreen('symptoms'); }}
+                        className="w-full h-20 rounded-2xl shadow-md transform hover:scale-105 transition-all flex items-center justify-between px-6"
+                        style={{ backgroundColor: scale.color }}
+                    >
+                        <span className="font-bold text-lg" style={{ color: scale.textColor }}>{scale.label}</span>
+                        <span className="text-xs font-bold bg-white/20 px-2 py-1 rounded" style={{ color: scale.textColor }}>{scale.sub}</span>
+                    </button>
+                    ))}
+                </div>
+                <button onClick={() => setScreen('profile')} className="mt-8 text-gray-500 underline">{t('रद्द करें', 'Cancel')}</button>
+                </div>
+            );
+
+            const renderSymptoms = () => {
+                const question = SYMPTOM_CHECKLIST[qIndex];
+                return (
+                <div key="symptoms" className="p-6 h-full flex flex-col justify-between animate-in slide-in-from-right duration-500">
+                    <div>
+                    <div className="w-full bg-gray-200 h-2 rounded-full mb-6">
+                        <div className="bg-pink-600 h-2 rounded-full transition-all duration-500" style={{ width: `${((qIndex + 1) / SYMPTOM_CHECKLIST.length) * 100}%` }}></div>
+                    </div>
+                    
+                    <div className="bg-white p-6 rounded-3xl shadow-lg border border-gray-100 text-center mb-6">
+                        <div className="text-6xl mb-4">{question.icon}</div>
+                        <h3 className="text-xl font-bold text-gray-800 mb-2">{lang === 'hi' ? question.hi : question.en}</h3>
+                        {question.critical && <span className="bg-red-100 text-red-600 text-xs font-bold px-2 py-1 rounded uppercase animate-pulse">Critical Check</span>}
+                    </div>
+
+                    <div className="bg-blue-50 p-4 rounded-xl border border-blue-100 flex gap-3 items-start">
+                        <div className="bg-white p-2 rounded-full shadow-sm"><Stethoscope size={20} className="text-blue-500"/></div>
+                        <div>
+                            <h4 className="font-bold text-blue-800 text-sm">ASHA Guide:</h4>
+                            <p className="text-sm text-blue-700 italic">"{question.guide}"</p>
+                        </div>
+                    </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4 mb-8">
+                    <button onClick={() => handleSymptomAnswer(false)} className="bg-gray-100 text-gray-600 py-4 rounded-xl font-bold text-lg hover:bg-gray-200 transition-colors">{t('नहीं', 'No')}</button>
+                    <button onClick={() => handleSymptomAnswer(true)} className="bg-pink-600 text-white py-4 rounded-xl font-bold text-lg shadow-lg hover:bg-pink-700 transition-colors">{t('हाँ', 'Yes')}</button>
+                    </div>
+                </div>
+                );
+            };
+
+            const renderRegistration = () => (
+                <div key="registration" className="p-4 space-y-4 pb-24 animate-in slide-in-from-bottom-8 duration-500">
+                <div className="bg-purple-100 p-4 rounded-xl border border-purple-200 mb-4">
+                    <div className="flex justify-between items-center mb-2">
+                        <h3 className="font-bold text-purple-800 flex items-center gap-2"><Sparkles size={16}/> Smart Fill</h3>
+                        {isSmartFilling && <div className="w-4 h-4 border-2 border-purple-600 border-t-transparent rounded-full animate-spin"></div>}
+                    </div>
+                    <textarea 
+                            value={smartInput}
+                            onChange={(e) => setSmartInput(e.target.value)}
+                            placeholder={t("यहाँ बोलें या टाइप करें (उदा: सुनीता, 24 साल, 5 महीने, नंदगाँव...)", "Speak or type details here...")}
+                            className="w-full p-3 rounded-lg border border-purple-200 text-sm focus:ring-2 focus:ring-purple-400 outline-none mb-2"
+                            rows={3}
+                    />
+                    <button onClick={handleSmartFill} disabled={isSmartFilling} className="bg-purple-600 text-white px-4 py-2 rounded-lg text-xs font-bold w-full hover:bg-purple-700 transition-colors">{t("स्वतः भरें (AI)", "Auto-Fill with AI")}</button>
+                </div>
+
+                <div className="bg-white p-6 rounded-2xl shadow-md space-y-4">
+                    <div>
+                        <label className="text-xs font-bold text-gray-500 uppercase ml-1">Name</label>
+                        <div className="bg-gray-50 flex items-center px-4 py-3 rounded-xl border border-gray-200 focus-within:border-pink-500">
+                            <UserCircle className="text-gray-400 mr-2" size={20}/>
+                            <input type="text" value={newMother.name} onChange={e => setNewMother({...newMother, name: e.target.value})} className="bg-transparent w-full outline-none font-medium" placeholder="Full Name" />
+                        </div>
+                    </div>
+                    
+                    <div className="grid grid-cols-2 gap-4">
+                            <div>
+                                <label className="text-xs font-bold text-gray-500 uppercase ml-1">Age</label>
+                                <input type="number" value={newMother.age} onChange={e => setNewMother({...newMother, age: e.target.value})} className="bg-gray-50 w-full px-4 py-3 rounded-xl border border-gray-200 outline-none font-medium" placeholder="Years" />
+                            </div>
+                            <div>
+                                <label className="text-xs font-bold text-gray-500 uppercase ml-1">Weeks</label>
+                                <input type="number" value={newMother.weeks} onChange={e => setNewMother({...newMother, weeks: e.target.value})} className="bg-gray-50 w-full px-4 py-3 rounded-xl border border-gray-200 outline-none font-medium" placeholder="Gest. Weeks" />
+                            </div>
+                    </div>
+
+                    <div>
+                        <label className="text-xs font-bold text-gray-500 uppercase ml-1">Phone</label>
+                        <div className="bg-gray-50 flex items-center px-4 py-3 rounded-xl border border-gray-200 focus-within:border-pink-500">
+                            <Phone className="text-gray-400 mr-2" size={20}/>
+                            <input type="tel" value={newMother.phone} onChange={e => setNewMother({...newMother, phone: e.target.value})} className="bg-transparent w-full outline-none font-medium" placeholder="Mobile Number" />
+                        </div>
+                    </div>
+                    
+                    {/* Device Sync Button */}
+                    <div className="pt-2 border-t border-gray-100">
+                        <button 
+                            onClick={handleDeviceSync}
+                            disabled={isDeviceConnecting}
+                            className={`w-full py-3 rounded-xl font-bold text-sm flex items-center justify-center gap-2 transition-all ${isDeviceConnecting ? 'bg-gray-100 text-gray-400' : 'bg-blue-50 text-blue-600 border border-blue-200 hover:bg-blue-100'}`}
+                        >
+                            {isDeviceConnecting ? <RefreshCw size={16} className="animate-spin"/> : <Bluetooth size={16}/>}
+                            {isDeviceConnecting ? 'Connecting...' : 'Sync Medical Device'}
+                        </button>
+                        {(newMother.hemoglobin || newMother.bp) && (
+                            <div className="mt-2 grid grid-cols-3 gap-2 text-center">
+                                <div className="bg-green-50 p-2 rounded border border-green-100">
+                                    <p className="text-[10px] text-green-600 font-bold">Hb</p>
+                                    <p className="font-bold text-gray-800">{newMother.hemoglobin || '--'}</p>
+                                </div>
+                                <div className="bg-green-50 p-2 rounded border border-green-100">
+                                    <p className="text-[10px] text-green-600 font-bold">BP</p>
+                                    <p className="font-bold text-gray-800">{newMother.bp || '--'}</p>
+                                </div>
+                                <div className="bg-green-50 p-2 rounded border border-green-100">
+                                    <p className="text-[10px] text-green-600 font-bold">Weight</p>
+                                    <p className="font-bold text-gray-800">{newMother.weight || '--'}</p>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
+                    <button onClick={handleRegister} className="w-full bg-pink-600 text-white py-4 rounded-xl font-bold shadow-lg hover:bg-pink-700 active:scale-95 transition-all flex items-center justify-center gap-2">
+                        <Save size={20}/> {isEditing ? t("अपडेट करें", "Update Details") : t("रजिस्टर करें", "Register Mother")}
+                    </button>
+                </div>
+                <GovFooter />
+                </div>
+            );
+
+            const renderDetailedProfile = () => (
+                <div key="detailed-profile" className="min-h-screen bg-[#FFFBF0] flex flex-col font-serif animate-in fade-in slide-in-from-right-8 duration-500">
+                    <div className="p-6 pb-2">
+                        <div className="flex justify-between items-start">
+                            <div className="animate-in slide-in-from-left-4 fade-in duration-500">
+                                <h1 className="text-4xl font-bold text-gray-800 font-serif mb-2">{selectedMother.name}</h1>
+                                {(selectedMother.anemia === 'severe' || selectedMother.anemia === 'moderate') && (
+                                    <span className="bg-[#D32F2F] text-white px-3 py-1 rounded text-xs font-bold uppercase tracking-wider animate-pulse">
+                                        Anaemic
+                                    </span>
+                                )}
+                            </div>
+                            <button 
+                                onClick={handleEdit}
+                                className="bg-gray-800 text-white flex items-center gap-2 px-4 py-2 rounded text-sm font-medium hover:bg-gray-700 hover:scale-105 active:scale-95 transition-all shadow-md"
+                            >
+                                <Edit size={14} /> Edit Details
+                            </button>
+                        </div>
+                    </div>
+
+                    <div className="flex border-b border-gray-200 mt-4 px-6 bg-[#E0F2F1]/30">
+                        {['analytics', 'details', 'notifications'].map((tab) => (
+                            <button 
+                                key={tab}
+                                onClick={() => setProfileTab(tab)}
+                                className={`mr-6 pb-3 text-sm font-medium transition-all duration-300 relative ${profileTab === tab ? 'text-gray-800' : 'text-gray-500 hover:text-gray-700'}`}
+                            >
+                                {tab.charAt(0).toUpperCase() + tab.slice(1)}
+                                {profileTab === tab && <span className="absolute bottom-0 left-0 w-full h-0.5 bg-gray-800 animate-in slide-in-from-left duration-300 rounded-full"></span>}
+                            </button>
+                        ))}
+                    </div>
+
+                    <div className="p-6 flex-1 overflow-y-auto">
+                        {profileTab === 'analytics' && (
+                            <div className="space-y-6 animate-in slide-in-from-bottom-8 fade-in duration-500">
+                                <div className="bg-white p-6 shadow-md hover:shadow-lg transition-all border border-gray-100 rounded-sm group">
+                                    <h3 className="text-lg font-bold text-gray-800 mb-4 font-serif">Hemoglobin Level Status</h3>
+                                    <div className="h-40 flex items-end gap-2 border-l border-b border-gray-300 p-2 relative">
+                                        <div className="w-full bg-[#3E2723] mx-auto relative group-hover:bg-[#5D4037] transition-colors duration-500" style={{ height: '65%', animation: 'growUp 1.5s ease-out' }}>
+                                            <div className="absolute -top-6 left-1/2 -translate-x-1/2 text-xs font-bold text-gray-600 opacity-0 group-hover:opacity-100 transition-opacity duration-300">{selectedMother.hemoglobin} g/dL</div>
+                                        </div>
+                                        <div className="absolute -left-8 top-0 text-[10px] text-gray-400">80</div>
+                                        <div className="absolute -left-8 top-1/2 text-[10px] text-gray-400">40</div>
+                                        <div className="absolute -left-8 bottom-0 text-[10px] text-gray-400">0</div>
+                                    </div>
+                                    <p className="text-center text-xs text-gray-500 mt-2 rotate-45 origin-center translate-y-2 inline-block">{selectedMother.name}</p>
+                                </div>
+
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                    <div className="bg-white p-6 shadow-md hover:shadow-lg transition-all border border-gray-100 rounded-sm">
+                                        <h3 className="text-lg font-bold text-gray-800 mb-4 font-serif">Risk Distribution</h3>
+                                        <div className="flex items-center justify-center gap-6">
+                                            <div className="relative w-32 h-32 rounded-full bg-[#D32F2F] flex items-center justify-center animate-in zoom-in duration-700">
+                                                <div className="absolute w-1/2 h-full right-0 bg-[#D32F2F] rounded-r-full"></div> 
+                                            </div>
+                                            <div className="text-xs text-gray-600 space-y-1 animate-in slide-in-from-right-4 fade-in duration-700 delay-200">
+                                                <div className="flex items-center gap-2"><div className="w-2 h-2 bg-[#D32F2F] rounded-full"></div> Anaemic: 1</div>
+                                                <div className="flex items-center gap-2"><div className="w-2 h-2 bg-gray-200 rounded-full"></div> Normal: 0</div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div className="bg-white p-6 shadow-md hover:shadow-lg transition-all border border-gray-100 rounded-sm">
+                                        <h3 className="text-lg font-bold text-gray-800 mb-4 font-serif">Delivery Status</h3>
+                                        <div className="h-32 flex items-end justify-between border-l border-b border-gray-300 p-2 text-[10px] text-gray-400">
+                                            <div className="w-1/4 h-[5%] bg-gray-200 rounded-t-sm"></div>
+                                            <div className="w-1/4 h-[5%] bg-gray-200 rounded-t-sm"></div>
+                                            <div className="w-1/4 bg-[#D4E157] rounded-t-sm" style={{ height: '100%', animation: 'growUp 1s ease-out 0.5s backwards' }}></div>
+                                            <div className="w-1/4 h-[5%] bg-gray-200 rounded-t-sm"></div>
+                                        </div>
+                                        <div className="flex justify-between text-[8px] text-gray-400 mt-1">
+                                            <span>1st Tri</span>
+                                            <span>2nd Tri</span>
+                                            <span>3rd Tri</span>
+                                            <span>Overdue</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {profileTab === 'details' && (
+                            <div className="bg-[#E0F2F1] p-8 rounded-sm animate-in slide-in-from-bottom-8 fade-in duration-500 text-gray-800">
+                                {[
+                                    { title: "Basic Information", data: [
+                                        { l: "Contact Number", v: selectedMother.phone },
+                                        { l: "Date of Birth", v: selectedMother.dob || "N/A" },
+                                        { l: "Address", v: selectedMother.address || selectedMother.village, full: true }
+                                    ]},
+                                    { title: "Pregnancy Information", data: [
+                                        { l: "Last Menstrual Period", v: selectedMother.lmp || "N/A" },
+                                        { l: "Weeks Pregnant", v: `${selectedMother.weeks} weeks` },
+                                        { l: "Expected Delivery Date", v: selectedMother.edd || "N/A", full: true }
+                                    ]},
+                                    { title: "Health Information", data: [
+                                        { l: "Hemoglobin Level", v: `${selectedMother.hemoglobin} g/dL` },
+                                        { l: "Current Weight", v: `${selectedMother.weight} kg` },
+                                        { l: "Blood Pressure", v: selectedMother.bp }
+                                    ]}
+                                ].map((section, idx) => (
+                                    <section key={idx} className="mb-8 animate-in slide-in-from-bottom-4 fade-in duration-500" style={{ animationDelay: `${idx * 150}ms` }}>
+                                        <h3 className="text-xl font-bold mb-4 font-serif text-gray-900 border-b border-gray-300 pb-2">{section.title}</h3>
+                                        <div className={`grid grid-cols-1 ${section.data.length === 3 && !section.data[2].full ? 'md:grid-cols-3' : 'md:grid-cols-2'} gap-y-6 gap-x-4`}>
+                                            {section.data.map((item, i) => (
+                                                <div key={i} className={item.full ? 'col-span-2' : ''}>
+                                                    <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">{item.l}:</p>
+                                                    <p className="text-lg font-serif">{item.v}</p>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </section>
+                                ))}
+                            </div>
+                        )}
+
+                        {profileTab === 'notifications' && (
+                            <div className="bg-[#E0F2F1] p-8 rounded-sm animate-in slide-in-from-bottom-8 fade-in duration-500 min-h-[500px]">
+                                <section className="mb-8">
+                                    <h3 className="text-xl font-bold mb-4 font-serif text-gray-900">Send Reminder</h3>
+                                    <div className="bg-white p-6 rounded shadow-md hover:shadow-lg transition-all border border-gray-100 space-y-4">
+                                        <div className="bg-[#E0F7FA] p-3 rounded border border-blue-100">
+                                            <p className="text-xs text-gray-500">Contact Number:</p>
+                                            <p className="font-bold text-gray-800">{selectedMother.phone}</p>
+                                        </div>
+                                        <div className="bg-[#E0F7FA] p-3 rounded border border-blue-100">
+                                            <p className="text-xs text-gray-500">Expected Delivery Date:</p>
+                                            <p className="font-bold text-gray-800">{selectedMother.edd || "N/A"}</p>
+                                        </div>
+                                        <button 
+                                            onClick={handleSendReminder}
+                                            className="w-full bg-gray-800 hover:bg-gray-900 text-white py-3 rounded text-sm font-medium flex items-center justify-center gap-2 transition hover:scale-[1.02] active:scale-[0.98]"
+                                        >
+                                            <Bell size={16} /> Send SMS Reminder
+                                        </button>
+                                    </div>
+                                </section>
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="p-4 bg-white border-t border-gray-200">
+                        <button 
+                            onClick={() => setScreen('asdt')} 
+                            className="w-full bg-gradient-to-r from-pink-600 to-purple-600 text-white py-4 rounded-xl font-bold shadow-lg active:scale-95 flex items-center justify-center gap-2 hover:shadow-xl hover:-translate-y-1 transition-all"
+                        >
+                            <Stethoscope size={20} className="animate-bounce" /> {t('जाँच शुरू करें', 'Start Checkup')}
+                        </button>
+                    </div>
+                    <GovFooter />
+                    <button onClick={() => setScreen('home')} className="fixed top-4 right-4 bg-gray-800 text-white p-2 rounded-full shadow-lg z-50 hover:bg-gray-700 hover:rotate-90 transition-all">
+                        <X size={20} />
+                    </button>
+                </div>
+            );
+
+            const renderLogin = () => (
+                <div key="login" className="min-h-screen bg-gradient-to-br from-pink-500 to-purple-600 flex flex-col px-6 py-12 justify-center animate-in fade-in slide-in-from-bottom-8 duration-700">
+                    <div className="bg-white/10 backdrop-blur-md p-8 rounded-3xl shadow-xl border border-white/20">
+                        <div className="text-center mb-8">
+                            <div className="w-20 h-20 bg-white rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg hover:scale-110 transition-transform duration-300">
+                                <Heart size={32} className="text-pink-600 animate-pulse" fill="#db2777"/>
+                            </div>
+                            <h1 className="text-3xl font-bold text-white mb-1">MAMATA</h1>
+                            <p className="text-pink-100 text-sm opacity-80">{t('आशा कार्यकर्ता लॉगिन', 'ASHA Worker Login')}</p>
+                        </div>
+
+                        <div className="space-y-4">
+                            <div className="bg-white/90 rounded-xl flex items-center px-4 py-3 shadow-sm focus-within:ring-2 focus-within:ring-yellow-300 transition-all focus-within:scale-105">
+                                <Phone size={20} className="text-pink-600 mr-3"/>
+                                <input 
+                                    type="tel" 
+                                    placeholder={t('मोबाइल नंबर', 'Mobile Number')}
+                                    className="bg-transparent w-full outline-none text-gray-800 font-medium placeholder:text-gray-400"
+                                    value={loginForm.phone}
+                                    onChange={e => setLoginForm({...loginForm, phone: e.target.value})}
+                                />
+                            </div>
+                            <div className="bg-white/90 rounded-xl flex items-center px-4 py-3 shadow-sm focus-within:ring-2 focus-within:ring-yellow-300 transition-all focus-within:scale-105">
+                                <Lock size={20} className="text-pink-600 mr-3"/>
+                                <input 
+                                    type="password" 
+                                    placeholder={t('पिन', '4-Digit PIN')}
+                                    className="bg-transparent w-full outline-none text-gray-800 font-medium placeholder:text-gray-400"
+                                    value={loginForm.pin}
+                                    onChange={e => setLoginForm({...loginForm, pin: e.target.value})}
+                                    maxLength={4}
+                                />
+                            </div>
+                            <button 
+                                onClick={handleLogin}
+                                className="w-full bg-yellow-400 hover:bg-yellow-300 text-pink-900 font-bold py-4 rounded-xl shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2 mt-4 hover:shadow-xl"
+                            >
+                                {t('लॉगिन करें', 'Login')} <ArrowRight size={20}/>
+                            </button>
+                        </div>
+
+                        <div className="text-center mt-8">
+                            <p className="text-white/70 text-sm mb-2">{t('नया खाता है?', 'New here?')}</p>
+                            <button 
+                                onClick={() => { setScreen('signup'); setOtpSent(false); setSignupForm({ name: '', phone: '', ashaId: '', pin: '', confirmPin: '', otp: '' }); }}
+                                className="text-white font-bold text-sm border-b-2 border-white/30 hover:border-white pb-0.5 hover:scale-105 transition-transform"
+                            >
+                                {t('रजिस्टर करें', 'Register New ASHA')}
+                            </button>
+                        </div>
+                    </div>
+                    <div className="mt-8">
+                        <GovFooter />
+                    </div>
+                </div>
+            );
+
+            const renderSignup = () => (
+                <div key="signup" className="min-h-screen bg-gray-50 flex flex-col animate-in slide-in-from-right-full duration-500">
+                    <div className="bg-gradient-to-r from-pink-600 to-purple-600 p-6 rounded-b-3xl shadow-lg pt-12">
+                        <button onClick={() => { if(otpSent) setOtpSent(false); else setScreen('login'); }} className="text-white/80 mb-4 flex items-center gap-2 font-medium hover:text-white transition-colors">
+                            <ArrowLeft size={18}/> {t('वापस', 'Back')}
+                        </button>
+                        <h1 className="text-2xl font-bold text-white">{otpSent ? t('OTP सत्यापन', 'Verify OTP') : t('नया पंजीकरण', 'Register Account')}</h1>
+                        <p className="text-pink-100 text-sm mt-1 opacity-80">{otpSent ? t('आपके मोबाइल पर OTP भेजा गया है', 'Enter OTP sent to your mobile') : t('अपना आशा विवरण भरें', 'Enter your ASHA details')}</p>
+                    </div>
+
+                    <div className="p-6 space-y-5 -mt-4">
+                        {!otpSent ? (
+                            <>
+                            <div className="bg-white p-6 rounded-2xl shadow-md border border-gray-100 space-y-4 animate-in slide-in-from-bottom-8 duration-500">
+                                <div>
+                                    <label className="block text-xs font-bold text-gray-400 uppercase mb-1 ml-1">{t('पूरा नाम', 'Full Name')}</label>
+                                    <div className="bg-gray-50 rounded-xl flex items-center px-4 py-3 border border-gray-200 focus-within:border-pink-500 focus-within:ring-1 focus-within:ring-pink-200 transition-all">
+                                        <UserCircle size={20} className="text-gray-400 mr-3"/>
+                                        <input 
+                                            type="text" 
+                                            placeholder="Rekha Singh"
+                                            className="bg-transparent w-full outline-none text-gray-800 font-medium"
+                                            value={signupForm.name}
+                                            onChange={e => setSignupForm({...signupForm, name: e.target.value})}
+                                        />
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <label className="block text-xs font-bold text-gray-400 uppercase mb-1 ml-1">{t('आशा आईडी', 'ASHA ID')}</label>
+                                    <div className="bg-gray-50 rounded-xl flex items-center px-4 py-3 border border-gray-200 focus-within:border-pink-500 focus-within:ring-1 focus-within:ring-pink-200 transition-all">
+                                        <ShieldCheck size={20} className="text-gray-400 mr-3"/>
+                                        <input 
+                                            type="text" 
+                                            placeholder="ASH-NAND-001"
+                                            className="bg-transparent w-full outline-none text-gray-800 font-medium"
+                                            value={signupForm.ashaId}
+                                            onChange={e => setSignupForm({...signupForm, ashaId: e.target.value})}
+                                        />
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <label className="block text-xs font-bold text-gray-400 uppercase mb-1 ml-1">{t('मोबाइल नंबर', 'Mobile Number')}</label>
+                                    <div className="bg-gray-50 rounded-xl flex items-center px-4 py-3 border border-gray-200 focus-within:border-pink-500 focus-within:ring-1 focus-within:ring-pink-200 transition-all">
+                                        <Phone size={20} className="text-gray-400 mr-3"/>
+                                        <input 
+                                            type="tel" 
+                                            placeholder="9876543210"
+                                            className="bg-transparent w-full outline-none text-gray-800 font-medium"
+                                            value={signupForm.phone}
+                                            onChange={e => setSignupForm({...signupForm, phone: e.target.value})}
+                                        />
+                                    </div>
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-3">
+                                    <div>
+                                        <label className="block text-xs font-bold text-gray-400 uppercase mb-1 ml-1">{t('पिन बनाएँ', 'Create PIN')}</label>
+                                        <div className="bg-gray-50 rounded-xl flex items-center px-3 py-3 border border-gray-200 focus-within:border-pink-500 transition-all">
+                                            <Lock size={16} className="text-gray-400 mr-2"/>
+                                            <input 
+                                                type="number" 
+                                                placeholder="****"
+                                                className="bg-transparent w-full outline-none text-gray-800 font-medium"
+                                                value={signupForm.pin}
+                                                onChange={e => setSignupForm({...signupForm, pin: e.target.value})}
+                                                maxLength={4}
+                                            />
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-bold text-gray-400 uppercase mb-1 ml-1">{t('पुष्टि करें', 'Confirm PIN')}</label>
+                                        <div className="bg-gray-50 rounded-xl flex items-center px-3 py-3 border border-gray-200 focus-within:border-pink-500 transition-all">
+                                            <KeyRound size={16} className="text-gray-400 mr-2"/>
+                                            <input 
+                                                type="number" 
+                                                placeholder="****"
+                                                className="bg-transparent w-full outline-none text-gray-800 font-medium"
+                                                value={signupForm.confirmPin}
+                                                onChange={e => setSignupForm({...signupForm, confirmPin: e.target.value})}
+                                                maxLength={4}
+                                            />
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <button 
+                                onClick={handleSendOtp}
+                                disabled={isOtpLoading}
+                                className="w-full bg-pink-600 hover:bg-pink-700 text-white font-bold py-4 rounded-xl shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2 hover:shadow-xl hover:-translate-y-1"
+                            >
+                                {isOtpLoading ? (
+                                    <>
+                                    <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                                    {t('जाँच हो रही है...', 'Verifying ASHA ID...')}
+                                    </>
+                                ) : (
+                                    <>
+                                    <Send size={20}/> {t('OTP भेजें', 'Send OTP')}
+                                    </>
+                                )}
+                            </button>
+                            </>
+                        ) : (
+                            <>
+                            <div className="bg-white p-6 rounded-2xl shadow-md border border-gray-100 text-center space-y-6 py-10 animate-in slide-in-from-right-8 duration-500">
+                                <div className="w-16 h-16 bg-pink-50 rounded-full flex items-center justify-center mx-auto animate-bounce">
+                                    <MessageCircle size={32} className="text-pink-500"/>
+                                </div>
+                                <div>
+                                    <h3 className="font-bold text-gray-800 text-lg mb-1">{t('OTP दर्ज करें', 'Enter Verification Code')}</h3>
+                                    <p className="text-gray-500 text-sm px-4 leading-relaxed">
+                                        {t('OTP उस मोबाइल पर भेजा गया है जो ASHA ID से लिंक है:', 'OTP sent to the mobile linked to ASHA ID:')}
+                                        <br/>
+                                        <span className="font-mono font-bold text-gray-800 bg-gray-100 px-2 rounded mt-1 inline-block">{signupForm.ashaId}</span>
+                                    </p>
+                                </div>
+
+                                <div className="flex justify-center gap-3">
+                                    <input 
+                                        type="text" 
+                                        maxLength={4}
+                                        placeholder="X X X X"
+                                        className="w-40 text-center text-3xl font-bold tracking-[1em] py-2 border-b-2 border-pink-300 focus:border-pink-600 outline-none text-gray-800 placeholder:text-gray-200 transition-all focus:scale-105"
+                                        value={signupForm.otp}
+                                        onChange={e => setSignupForm({...signupForm, otp: e.target.value})}
+                                    />
+                                </div>
+                                
+                                <p className="text-xs text-gray-400 font-medium cursor-pointer hover:text-pink-600 transition-colors">{t('OTP नहीं मिला? दोबारा भेजें', "Didn't receive code? Resend")}</p>
+                            </div>
+
+                            <button 
+                                onClick={handleVerifyOtp}
+                                className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-4 rounded-xl shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2 hover:shadow-xl hover:-translate-y-1"
+                            >
+                                <Check size={20}/> {t('वेरीफाई और रजिस्टर करें', 'Verify & Register')}
+                            </button>
+                            </>
+                        )}
+                    </div>
+                    <GovFooter />
+                </div>
+            );
+
+            const renderAshaProfile = () => (
+                <div key="profile" className="p-4 space-y-6 animate-in slide-in-from-left-full duration-500">
+                <div className="bg-white rounded-2xl p-6 shadow-lg border border-gray-200 relative overflow-hidden group">
+                    <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-pink-500 to-purple-600 group-hover:h-3 transition-all duration-300"></div>
+                    <div className="flex justify-between items-start mb-6">
+                        <div className="flex items-center gap-4">
+                            <div className="w-20 h-20 bg-gray-100 rounded-full border-4 border-white shadow-md flex items-center justify-center overflow-hidden hover:scale-105 transition-transform"><UserCircle size={64} className="text-gray-400"/></div>
+                            <div><h2 className="text-xl font-bold text-gray-800">Rekha Singh</h2><p className="text-sm text-gray-500 font-medium">ASHA Worker</p><div className="flex items-center gap-1 text-green-600 text-xs font-bold bg-green-50 px-2 py-1 rounded mt-1 w-fit"><ShieldCheck size={12}/> Verified</div></div>
+                        </div>
+                        <div className="bg-white p-1 rounded-lg border border-gray-200 shadow-sm"><QrCode size={64} className="text-gray-800"/></div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4 text-sm text-gray-600 mb-2">
+                        <div><p className="text-xs text-gray-400 uppercase font-bold">ID Number</p><p className="font-mono font-bold text-gray-800">ASH-NAND-042</p></div>
+                        <div><p className="text-xs text-gray-400 uppercase font-bold">PHC Center</p><p className="font-bold text-gray-800">Nandgaon</p></div>
+                    </div>
+                    
+                    {/* NEW: Career Progression */}
+                    <div className="mt-4 pt-4 border-t border-gray-100">
+                        <div className="flex justify-between items-center mb-2">
+                            <h4 className="text-xs font-bold text-purple-700 uppercase flex items-center gap-2"><Briefcase size={14}/> Career Path</h4>
+                            <span className="text-[10px] bg-purple-100 text-purple-800 px-2 py-0.5 rounded font-bold">80% to Promotion</span>
+                        </div>
+                        <div className="relative pt-1">
+                            <div className="flex mb-2 items-center justify-between">
+                                <div className="text-right">
+                                    <span className="text-xs font-semibold inline-block text-purple-600">
+                                        ASHA Facilitator
+                                    </span>
+                                </div>
+                            </div>
+                            <div className="overflow-hidden h-2 mb-4 text-xs flex rounded bg-purple-200">
+                                <div style={{ width: "80%" }} className="shadow-none flex flex-col text-center whitespace-nowrap text-white justify-center bg-purple-500 transition-all duration-1000 ease-out"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Family Champion Card */}
+                    <div className="bg-orange-50 border border-orange-200 rounded-xl p-4 mt-2 relative overflow-hidden">
+                        <div className="absolute -right-4 -top-4 text-orange-100"><Award size={80}/></div>
+                        <h4 className="text-sm font-bold text-orange-800 flex items-center gap-2 relative z-10"><HeartHandshake size={16}/> {t('मेरा परिवार, मेरी ताकत', 'My Family, My Strength')}</h4>
+                        <p className="text-xs text-orange-700 mt-1 relative z-10">
+                            {t('देश की सेवा में मेरे परिवार का सहयोग अतुलनीय है।', 'My family supports me in serving the nation.')}
+                        </p>
+                        <div className="mt-3 flex gap-2">
+                            <span className="text-[10px] font-bold bg-white text-orange-600 px-2 py-1 rounded border border-orange-100">#ProudHusband</span>
+                            <span className="text-[10px] font-bold bg-white text-orange-600 px-2 py-1 rounded border border-orange-100">#SupportiveInLaws</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                    <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-col items-center text-center hover:-translate-y-1 hover:shadow-md transition-all"><div className="bg-green-100 p-2 rounded-full mb-2"><TrendingUp className="text-green-600" size={20}/></div><span className="text-2xl font-bold text-gray-800">32</span><span className="text-xs text-gray-500 font-bold uppercase">{t('माह की विज़िट', 'Visits This Month')}</span></div>
+                    <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-col items-center text-center hover:-translate-y-1 hover:shadow-md transition-all"><div className="bg-blue-100 p-2 rounded-full mb-2"><Check className="text-blue-600" size={20}/></div><span className="text-2xl font-bold text-gray-800">94%</span><span className="text-xs text-gray-500 font-bold uppercase">{t('डेटा गुणवत्ता', 'Data Quality')}</span></div>
+                </div>
+                
+                <button onClick={() => setScreen('support')} className="w-full mt-4 bg-red-50 text-red-700 p-4 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-red-100 transition-colors active:scale-95 border border-red-200">
+                    <ShieldAlert size={20}/> {t('ASHA सहायता केंद्र', 'ASHA Help Center')}
+                </button>
+
+                <button onClick={() => setScreen('login')} className="w-full mt-4 bg-gray-100 text-gray-600 p-4 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-gray-200 transition-colors active:scale-95">
+                    <LogOut size={20}/> {t('लॉग आउट', 'Log Out')}
+                </button>
+                <GovFooter />
+                </div>
+            );
+
+            const renderSupport = () => (
+                <div key="support" className="p-4 space-y-6 pb-24 animate-in slide-in-from-right-full duration-500">
+                    <div className="bg-red-600 p-6 rounded-2xl text-white shadow-lg">
+                        <h2 className="text-2xl font-bold flex items-center gap-2"><ShieldAlert className="text-yellow-300"/> ASHA Sahayata</h2>
+                        <p className="text-red-100 text-sm mt-1">{t('आपकी सुरक्षा हमारी प्राथमिकता है', 'Your safety is our priority')}</p>
+                    </div>
+
+                    <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 space-y-4">
+                        <div className="flex items-start gap-4">
+                            <div className="bg-red-100 p-3 rounded-full text-red-600"><Megaphone size={24}/></div>
+                            <div className="flex-1">
+                                <h4 className="font-bold text-gray-800">{t('शिकायत दर्ज करें', 'Report Issue')}</h4>
+                                <p className="text-xs text-gray-500 mb-2">{t('उत्पीड़न या भेदभाव की रिपोर्ट करें। आपकी पहचान गुप्त रहेगी।', 'Report harassment or discrimination. Anonymous.')}</p>
+                                <button className="bg-red-600 text-white px-4 py-2 rounded-lg text-xs font-bold hover:bg-red-700">{t('रिपोर्ट करें', 'Report Now')}</button>
+                            </div>
+                        </div>
+                        <div className="border-t border-gray-100 pt-4 flex items-start gap-4">
+                            <div className="bg-purple-100 p-3 rounded-full text-purple-600"><Users size={24}/></div>
+                            <div className="flex-1">
+                                <h4 className="font-bold text-gray-800">{t('साथी नेटवर्क', 'Peer Network')}</h4>
+                                <p className="text-xs text-gray-500 mb-2">{t('खतरे वाले इलाकों में समूह में जाएँ।', 'Connect with local ASHAs for group visits.')}</p>
+                                <button className="bg-purple-600 text-white px-4 py-2 rounded-lg text-xs font-bold hover:bg-purple-700">{t('कनेक्ट करें', 'Connect')}</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="bg-blue-50 p-4 rounded-xl border border-blue-100">
+                        <h4 className="font-bold text-blue-800 mb-2 flex items-center gap-2"><Phone size={16}/> Emergency Contacts</h4>
+                        <div className="space-y-2">
+                            <div className="flex justify-between bg-white p-3 rounded shadow-sm">
+                                <span className="text-sm font-medium">Medical Officer</span>
+                                <a href="tel:102" className="text-blue-600 font-bold">Call</a>
+                            </div>
+                            <div className="flex justify-between bg-white p-3 rounded shadow-sm">
+                                <span className="text-sm font-medium">Women Helpline</span>
+                                <a href="tel:1091" className="text-blue-600 font-bold">1091</a>
+                            </div>
+                        </div>
+                    </div>
+                    <button onClick={() => setScreen('asha_profile')} className="w-full bg-gray-100 text-gray-700 py-3 rounded-xl font-bold text-sm">{t('वापस जाएं', 'Back to Profile')}</button>
+                    <GovFooter />
+                </div>
+            );
+
+            const renderFinance = () => {
+                const totalIncentive = transactions.filter(t => t.type === 'incentive' && t.status === 'credited').reduce((sum, t) => sum + t.amount, 0);
+                const totalPending = transactions.filter(t => t.type === 'incentive' && t.status === 'pending').reduce((sum, t) => sum + t.amount, 0);
+                const salary = transactions.find(t => t.type === 'salary')?.amount || 4500;
+
+                return (
+                    <div key="finance" className="p-4 space-y-4 pb-24 animate-in slide-in-from-right-full duration-500">
+                        <div className="bg-gradient-to-r from-emerald-600 to-teal-600 p-6 rounded-2xl text-white shadow-lg relative overflow-hidden">
+                            <div className="absolute -right-6 -top-6 bg-white/10 w-32 h-32 rounded-full"></div>
+                            <div className="flex justify-between items-start mb-4">
+                                <div>
+                                    <p className="text-emerald-100 text-xs font-bold uppercase tracking-wider">{t('कुल कमाई (अक्टूबर)', 'Total Earnings (Oct)')}</p>
+                                    <h2 className="text-3xl font-bold mt-1">₹ {totalIncentive + salary}</h2>
+                                </div>
+                                <div className="bg-white/20 p-2 rounded-lg"><Wallet size={24} className="text-white"/></div>
+                            </div>
+                            <div className="grid grid-cols-2 gap-4 border-t border-white/20 pt-4">
+                                <div>
+                                    <p className="text-[10px] text-emerald-100 uppercase">Fixed Honorarium</p>
+                                    <p className="font-bold text-lg">₹ {salary}</p>
+                                </div>
+                                <div>
+                                    <p className="text-[10px] text-emerald-100 uppercase">Pending Incentives</p>
+                                    <p className="font-bold text-lg text-yellow-300">₹ {totalPending}</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="flex bg-gray-100 p-1 rounded-xl gap-1">
+                            <button onClick={() => setFinanceTab('ledger')} className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${financeTab === 'ledger' ? 'bg-white text-emerald-700 shadow' : 'text-gray-500'}`}>{t('लेजर', 'Ledger')}</button>
+                            <button onClick={() => setFinanceTab('salary')} className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${financeTab === 'salary' ? 'bg-white text-emerald-700 shadow' : 'text-gray-500'}`}>{t('सैलरी स्लिप', 'Salary Slip')}</button>
+                            <button onClick={() => setFinanceTab('benefits')} className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${financeTab === 'benefits' ? 'bg-white text-emerald-700 shadow' : 'text-gray-500'}`}>{t('Benefits', 'Benefits')}</button>
+                        </div>
+
+                        <div className="min-h-[300px]">
+                            {financeTab === 'ledger' && (
+                                <div className="space-y-3 animate-in fade-in">
+                                    {transactions.map((txn) => (
+                                        <div key={txn.id} className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex justify-between items-center">
+                                            <div className="flex items-center gap-3">
+                                                <div className={`p-3 rounded-full ${txn.status === 'credited' ? 'bg-green-100 text-green-600' : 'bg-yellow-100 text-yellow-600'}`}>
+                                                    {txn.type === 'salary' ? <CreditCard size={20}/> : <Banknote size={20}/>}
+                                                </div>
+                                                <div>
+                                                    <h4 className="font-bold text-gray-800 text-sm">{txn.desc}</h4>
+                                                    <p className="text-xs text-gray-500">{txn.date} • {txn.status === 'credited' ? 'Bank Credit' : 'Processing...'}</p>
+                                                </div>
+                                            </div>
+                                            <div className="text-right">
+                                                <p className={`font-bold ${txn.status === 'credited' ? 'text-green-600' : 'text-yellow-600'}`}>+ ₹{txn.amount}</p>
+                                                {txn.status === 'credited' && <CheckCircle size={12} className="ml-auto text-green-600 mt-1"/>}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                            {financeTab === 'salary' && (
+                                <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 space-y-4 animate-in zoom-in">
+                                    <div className="text-center border-b pb-4">
+                                        <h3 className="font-bold text-gray-800">Salary Slip: OCT 2025</h3>
+                                        <p className="text-xs text-gray-500">Generated on 01 Nov 2025</p>
+                                    </div>
+                                    <div className="space-y-2 text-sm">
+                                        <div className="flex justify-between"><span>Fixed Honorarium</span> <span className="font-bold">₹ 4,500</span></div>
+                                        <div className="flex justify-between"><span>Routine Incentives</span> <span className="font-bold">₹ 1,200</span></div>
+                                        <div className="flex justify-between"><span>Travel Allowance</span> <span className="font-bold">₹ 300</span></div>
+                                        <div className="flex justify-between border-t pt-2 mt-2 text-emerald-700">
+                                            <span className="font-bold text-lg">Net Pay</span> 
+                                            <span className="font-bold text-lg">₹ 6,000</span>
+                                        </div>
+                                    </div>
+                                    <button className="w-full bg-emerald-50 text-emerald-700 py-3 rounded-xl font-bold text-sm flex items-center justify-center gap-2 mt-4 hover:bg-emerald-100 transition-colors">
+                                        <DownloadCloud size={16}/> Download PDF
+                                    </button>
+                                </div>
+                            )}
+                            
+                            {/* NEW: Benefits Tab for Social Security */}
+                            {financeTab === 'benefits' && (
+                                <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 space-y-4 animate-in zoom-in">
+                                    <div className="text-center border-b pb-4 mb-4">
+                                        <h3 className="font-bold text-gray-800 flex items-center justify-center gap-2"><Umbrella size={20} className="text-blue-500"/> Social Security</h3>
+                                        <p className="text-xs text-gray-500">Official Essential Worker Benefits</p>
+                                    </div>
+                                    
+                                    <div className="space-y-4">
+                                        <div className="bg-blue-50 p-4 rounded-xl border border-blue-100">
+                                            <div className="flex justify-between items-center mb-1">
+                                                <span className="font-bold text-blue-800 text-sm">PM Jeevan Jyoti Bima</span>
+                                                <span className="bg-green-100 text-green-700 text-[10px] font-bold px-2 py-0.5 rounded">ACTIVE</span>
+                                            </div>
+                                            <p className="text-xs text-blue-600">Life Insurance Cover: ₹2 Lakhs</p>
+                                        </div>
+
+                                        <div className="bg-purple-50 p-4 rounded-xl border border-purple-100">
+                                            <div className="flex justify-between items-center mb-1">
+                                                <span className="font-bold text-purple-800 text-sm">Pension Fund (NPS)</span>
+                                                <span className="bg-green-100 text-green-700 text-[10px] font-bold px-2 py-0.5 rounded">ACTIVE</span>
+                                            </div>
+                                            <p className="text-xs text-purple-600 mb-2">Total Accrued: ₹ 12,450</p>
+                                            <div className="w-full bg-purple-200 rounded-full h-1.5"><div className="bg-purple-600 h-1.5 rounded-full" style={{width: '35%'}}></div></div>
+                                        </div>
+
+                                        <div className="bg-orange-50 p-4 rounded-xl border border-orange-100">
+                                            <div className="flex justify-between items-center mb-1">
+                                                <span className="font-bold text-orange-800 text-sm">Ayushman Bharat</span>
+                                                <span className="bg-green-100 text-green-700 text-[10px] font-bold px-2 py-0.5 rounded">LINKED</span>
+                                            </div>
+                                            <p className="text-xs text-orange-600">Family Health Cover: ₹5 Lakhs/Year</p>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                        <GovFooter />
+                        <button onClick={() => setScreen('home')} className="fixed top-4 right-4 bg-gray-800 text-white p-2 rounded-full shadow-lg z-50 hover:bg-gray-700 hover:rotate-90 transition-all">
+                            <X size={20} />
+                        </button>
+                    </div>
+                );
+            };
+
+            const renderHome = () => {
+                const totalMothers = mothers.length;
+                const anemicMothers = mothers.filter(m => m.anemia && m.anemia !== 'none').length;
+                const highRiskMothers = mothers.filter(m => m.risk === 'high').length;
+
+                const filteredMothers = mothers.filter(mom => {
+                    const matchesSearch = mom.name.toLowerCase().includes(searchQuery.toLowerCase()) || mom.village.toLowerCase().includes(searchQuery.toLowerCase());
+                    const matchesTab = dashboardTab === 'all' 
+                        ? true 
+                        : dashboardTab === 'anemic' 
+                            ? (mom.anemia && mom.anemia !== 'none')
+                            : (mom.risk === 'high');
+                    return matchesSearch && matchesTab;
+                });
+
+                return (
+                    <div key="home" className="p-4 space-y-4 pb-24 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                    <div className="flex justify-between items-end mb-2">
+                        <div>
+                            <h2 className="text-gray-500 font-bold text-xs uppercase">{t('नमस्ते आशा दीदी', 'Hello ASHA Didi')}</h2>
+                            <p className="text-2xl font-bold text-gray-800">{t('डैशबोर्ड', "Dashboard")}</p>
+                        </div>
+                        <div className="text-[10px] bg-green-100 text-green-800 px-3 py-1 rounded-full flex items-center gap-1 border border-green-200 shadow-sm animate-pulse">
+                            <Link size={10}/> {t('ANMOL/RCH सिंक', 'RCH Portal Synced')}
+                        </div>
+                    </div>
+                    
+                    {/* NEW: Feedback Loops (Outcome Notification) */}
+                    <div className="mb-2 space-y-2">
+                        {OUTCOME_FEEDBACK.map(item => (
+                            <div key={item.id} className="bg-white border-l-4 border-green-500 p-3 rounded-r-xl shadow-sm flex items-start gap-3 animate-in slide-in-from-top-4">
+                                <div className="bg-green-100 p-2 rounded-full text-green-600 mt-1"><Baby size={16}/></div>
+                                <div>
+                                    <h4 className="text-sm font-bold text-gray-800">{item.title}</h4>
+                                    <p className="text-xs text-gray-600 leading-tight">{item.desc}</p>
+                                    <p className="text-[10px] text-gray-400 mt-1">{item.date}</p>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-3">
+                        <div className="bg-blue-50 border border-blue-200 p-3 rounded-xl flex flex-col items-center justify-center text-center shadow-sm hover:scale-105 transition-transform">
+                            <span className="text-2xl font-bold text-blue-700">{totalMothers}</span>
+                            <span className="text-[10px] uppercase font-bold text-blue-400 leading-tight mt-1">{t('कुल दर्ज', 'Total')}</span>
+                        </div>
+                        <div className="bg-red-50 border border-red-200 p-3 rounded-xl flex flex-col items-center justify-center text-center shadow-sm hover:scale-105 transition-transform">
+                            <span className="text-2xl font-bold text-red-700">{anemicMothers}</span>
+                            <span className="text-[10px] uppercase font-bold text-red-400 leading-tight mt-1">{t('एनीमिक', 'Anemic')}</span>
+                        </div>
+                        <div onClick={() => setScreen('finance')} className="bg-emerald-50 border border-emerald-200 p-3 rounded-xl flex flex-col items-center justify-center text-center shadow-sm hover:scale-105 transition-transform cursor-pointer">
+                            <span className="text-2xl font-bold text-emerald-700">₹6k</span>
+                            <span className="text-[10px] uppercase font-bold text-emerald-400 leading-tight mt-1 flex items-center gap-1 justify-center"><Wallet size={10}/> {t('वॉलेट', 'Wallet')}</span>
+                        </div>
+                    </div>
+
+                    <div 
+                        onClick={() => setScreen('training')}
+                        className="bg-gradient-to-r from-purple-600 to-indigo-600 p-4 rounded-xl text-white shadow-lg flex justify-between items-center cursor-pointer hover:scale-[1.02] transition-transform active:scale-95"
+                    >
+                        <div>
+                            <h3 className="font-bold text-lg flex items-center gap-2"><GraduationCap size={20} className="text-yellow-300"/> {t('आशा एकेडमी', 'ASHA Academy')}</h3>
+                            <p className="text-xs text-indigo-100 opacity-90">{t('नए कोर्स और वीडियो उपलब्ध हैं', 'New courses available')}</p>
+                        </div>
+                        <div className="bg-white/20 p-2 rounded-full"><ChevronRight size={20}/></div>
+                    </div>
+
+                    <div className="bg-white p-2 rounded-xl border border-gray-200 shadow-sm flex items-center focus-within:ring-2 focus-within:ring-purple-200 transition-all">
+                        <Search className="text-gray-400 ml-2" size={20}/>
+                        <input 
+                            type="text" 
+                            placeholder={t("नाम या गाँव खोजें...", "Search name or village...")}
+                            className="w-full p-2 outline-none text-gray-700 font-medium"
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                        />
+                    </div>
+
+                    <div className="bg-gray-100 p-1 rounded-xl flex gap-1">
+                        <button 
+                            onClick={() => setDashboardTab('all')}
+                            className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${dashboardTab === 'all' ? 'bg-white text-gray-800 shadow-sm scale-105' : 'text-gray-500 hover:bg-gray-200'}`}
+                        >
+                            {t('सभी', 'All Women')} ({totalMothers})
+                        </button>
+                        <button 
+                            onClick={() => setDashboardTab('anemic')}
+                            className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${dashboardTab === 'anemic' ? 'bg-red-600 text-white shadow-sm scale-105' : 'text-gray-500 hover:bg-gray-200'}`}
+                        >
+                            {t('एनीमिक', 'Anemic')} ({anemicMothers})
+                        </button>
+                        <button 
+                            onClick={() => setDashboardTab('high_risk')}
+                            className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${dashboardTab === 'high_risk' ? 'bg-gray-800 text-white shadow-sm scale-105' : 'text-gray-500 hover:bg-gray-200'}`}
+                        >
+                            {t('हाई रिस्क', 'High Risk')} ({highRiskMothers})
+                        </button>
+                    </div>
+
+                    <div className="space-y-3 min-h-[200px]">
+                        {filteredMothers.length > 0 ? (
+                            filteredMothers.map((mom, i) => (
+                                <div key={mom.id} onClick={() => { setSelectedMother(mom); setScreen('profile'); }} className="bg-white p-4 rounded-xl flex items-center gap-4 shadow-sm border border-gray-100 hover:shadow-md hover:-translate-y-1 transition-all active:scale-98 animate-in slide-in-from-bottom-4" style={{ animationDelay: `${i * 75}ms` }}>
+                                <div className="w-12 h-12 bg-pink-100 rounded-full flex items-center justify-center text-pink-700 font-bold shadow-sm">{mom.image}</div>
+                                <div className="flex-1">
+                                    <div className="flex justify-between">
+                                        <div className="font-bold text-gray-800">{mom.name}</div>
+                                        {mom.risk === 'high' && <div className="text-[10px] bg-red-100 text-red-600 px-2 py-0.5 rounded font-bold uppercase animate-pulse">High Risk</div>}
+                                    </div>
+                                    <div className="text-xs text-gray-500 flex items-center gap-2">
+                                        <span>{mom.weeks} wks</span> • <span>{mom.village}</span>
+                                        {mom.anemia === 'severe' && <span className="w-2 h-2 rounded-full bg-red-500 animate-ping"></span>}
+                                    </div>
+                                </div>
+                                <ChevronRight size={20} className="text-gray-300" />
+                                </div>
+                            ))
+                        ) : (
+                            <div className="flex flex-col items-center justify-center py-10 text-gray-400 animate-in fade-in">
+                                <Filter size={48} className="mb-2 opacity-20"/>
+                                <p className="text-sm">{t("कोई डेटा नहीं मिला", "No records found")}</p>
+                            </div>
+                        )}
+                    </div>
+                    
+                    <div className="grid grid-cols-2 gap-4">
+                        <button onClick={() => setShowScanner(true)} className="bg-purple-500 text-white p-4 rounded-2xl font-bold flex flex-col items-center gap-2 shadow-lg active:scale-95 text-sm hover:shadow-xl hover:-translate-y-1 transition-all"><Scan size={20} /> {t('QR स्कैन करें', 'Scan A-SDT')}</button>
+                        <button onClick={() => { setIsEditing(false); setScreen('registration'); }} className="bg-pink-500 text-white p-4 rounded-2xl font-bold flex flex-col items-center gap-2 shadow-lg active:scale-95 text-sm hover:shadow-xl hover:-translate-y-1 transition-all"><Plus size={20} /> {t('नया पंजीकरण', 'New Mother')}</button>
+                    </div>
+                    <GovFooter />
+                    </div>
+                );
+            };
+
+            const renderTraining = () => (
+                <div key="training" className="p-4 space-y-4 pb-24 animate-in slide-in-from-right-full duration-500">
+                    <div className="bg-gradient-to-r from-purple-700 to-indigo-700 p-6 rounded-2xl text-white shadow-lg mb-6 relative overflow-hidden">
+                        <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full -mr-10 -mt-10"></div>
+                        <h2 className="text-2xl font-bold flex items-center gap-2 relative z-10"><GraduationCap className="text-yellow-300"/> Academy</h2>
+                        <div className="flex items-center gap-2 mt-2 relative z-10">
+                            <Star className="text-yellow-400 fill-yellow-400" size={16}/>
+                            <span className="font-bold">{earnedStars} Stars Earned</span>
+                        </div>
+                    </div>
+
+                    <div className="flex bg-gray-100 p-1 rounded-xl gap-1">
+                        <button onClick={() => setTrainingTab('academy')} className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${trainingTab === 'academy' ? 'bg-white text-purple-700 shadow' : 'text-gray-500'}`}>Academy</button>
+                        <button onClick={() => setTrainingTab('echo')} className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${trainingTab === 'echo' ? 'bg-white text-purple-700 shadow' : 'text-gray-500'}`}>ECHO Live</button>
+                        <button onClick={() => setTrainingTab('simulation')} className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${trainingTab === 'simulation' ? 'bg-white text-purple-700 shadow' : 'text-gray-500'}`}>Sim Lab</button>
+                    </div>
+
+                    <div className="min-h-[300px]">
+                        {trainingTab === 'academy' && (
+                            <div className="space-y-3 animate-in fade-in">
+                                {trainingModules.map(module => (
+                                    <div key={module.id} className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex justify-between items-center">
+                                        <div className="flex items-center gap-3">
+                                            <div className={`p-3 rounded-full ${module.type === 'audio' ? 'bg-pink-100 text-pink-600' : 'bg-blue-100 text-blue-600'}`}>
+                                                {module.type === 'audio' ? <Headphones size={20}/> : <Video size={20}/>}
+                                            </div>
+                                            <div>
+                                                <h4 className="font-bold text-gray-800 text-sm">{module.title}</h4>
+                                                <p className="text-xs text-gray-500">{module.duration} • {module.type === 'audio' ? 'Audio' : 'Video'}</p>
+                                            </div>
+                                        </div>
+                                        <button className="text-purple-600 hover:scale-110 transition-transform"><PlayCircle size={28}/></button>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+
+                        {trainingTab === 'echo' && (
+                            <div className="space-y-4 animate-in fade-in">
+                                {ECHO_SESSIONS.map(session => (
+                                    <div key={session.id} className="bg-white p-4 rounded-xl shadow-md border-l-4 border-purple-500">
+                                        <div className="flex justify-between items-start mb-2">
+                                            <span className="text-[10px] font-bold bg-purple-100 text-purple-700 px-2 py-1 rounded uppercase tracking-wide">{session.status}</span>
+                                            <Video size={16} className="text-gray-400"/>
+                                        </div>
+                                        <h4 className="font-bold text-gray-800 text-lg mb-1">{session.topic}</h4>
+                                        <p className="text-sm text-gray-600 mb-3">{session.expert} • {session.time}</p>
+                                        <button className="w-full bg-purple-600 text-white py-2 rounded-lg font-bold text-sm hover:bg-purple-700 transition-colors">Join Session</button>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+
+                        {trainingTab === 'simulation' && (
+                            <div className="bg-white p-6 rounded-2xl shadow-lg border border-purple-100 text-center animate-in zoom-in">
+                                <div className="w-20 h-20 bg-yellow-100 rounded-full flex items-center justify-center mx-auto mb-4 animate-bounce">
+                                    <Gamepad2 size={32} className="text-yellow-600"/>
+                                </div>
+                                <h3 className="font-bold text-xl text-gray-800 mb-2">Daily Challenge</h3>
+                                <p className="text-sm text-gray-600 mb-6">"Rani (8 months pregnant) has swelling in feet and BP 150/100. What is your immediate action?"</p>
+                                <div className="space-y-3">
+                                    <button onClick={()=> alert('Correct! You earned a star!')} className="w-full p-3 rounded-xl border border-gray-200 text-gray-700 font-medium hover:bg-green-50 hover:border-green-300 hover:text-green-700 transition-all text-sm">Advice Rest & Water</button>
+                                    <button onClick={()=> { setEarnedStars(s => s+1); setShowConfetti(true); setTimeout(()=>setShowConfetti(false),2000); }} className="w-full p-3 rounded-xl border border-gray-200 text-gray-700 font-medium hover:bg-green-50 hover:border-green-300 hover:text-green-700 transition-all text-sm">Refer to Hospital Immediately</button>
+                                    <button onClick={()=> alert('Incorrect. High BP is dangerous.')} className="w-full p-3 rounded-xl border border-gray-200 text-gray-700 font-medium hover:bg-green-50 hover:border-green-300 hover:text-green-700 transition-all text-sm">Wait for 2 days</button>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                    {showConfetti && <div className="fixed inset-0 pointer-events-none flex items-center justify-center z-50"><div className="animate-ping text-6xl">🌟</div></div>}
+                    <GovFooter />
+                    <button onClick={() => setScreen('home')} className="fixed top-4 right-4 bg-gray-800 text-white p-2 rounded-full shadow-lg z-50 hover:bg-gray-700 hover:rotate-90 transition-all">
+                        <X size={20} />
+                    </button>
+                </div>
+            );
+
+            const renderResult = () => {
+                const cfg = { GREEN: { c: 'bg-green-500', t: 'NORMAL', i: <Check size={48}/>, a: 'Routine Care' }, YELLOW: { c: 'bg-yellow-400', t: 'MODERATE', i: <Activity size={48}/>, a: 'Follow up 1 week' }, ORANGE: { c: 'bg-orange-500', t: 'HIGH RISK', i: <AlertTriangle size={48}/>, a: 'PHC in 3 days' }, RED: { c: 'bg-red-600', t: 'DANGER', i: <AlertTriangle size={48}/>, a: 'HOSPITAL NOW' } }[riskLevel];
+                return (
+                <div key="result" className="p-6 h-full flex flex-col items-center text-center overflow-y-auto animate-in zoom-in duration-500">
+                    {showConfetti && riskLevel === 'GREEN' && <div className="absolute inset-0 pointer-events-none flex justify-center pt-20"><Sparkles className="text-yellow-400 w-16 h-16 animate-ping"/></div>}
+                    <div className={`${cfg.c} text-white w-48 h-48 rounded-full flex flex-col items-center justify-center shadow-2xl mb-6 ring-8 ring-gray-100 animate-bounce`}>{cfg.i}<div className="font-bold text-2xl mt-2">{t(cfg.t, cfg.t)}</div></div>
+                    <div className="text-4xl font-black text-gray-800 mb-6">{riskScore} <span className="text-sm text-gray-500 font-medium">SCORE</span></div>
+                    <div className="w-full bg-white p-6 rounded-3xl border border-gray-100 text-left shadow-lg mb-6 hover:scale-105 transition-transform"><h4 className="font-bold text-gray-700 border-b pb-3 mb-2">{t('सलाह', 'Recommendation')}</h4><p className="font-medium text-gray-800 text-lg">{cfg.a}</p></div>
+                    
+                    {/* NEW: Credential Multiplier (Doctor Audio) */}
+                    {(riskLevel === 'RED' || riskLevel === 'ORANGE') && (
+                        <div className="w-full mb-4 animate-in slide-in-from-bottom-4">
+                            <button 
+                                onClick={handlePlayDoctorAudio}
+                                className={`w-full py-4 rounded-xl font-bold text-sm shadow-lg flex items-center justify-center gap-3 transition-all ${isPlayingDoctor ? 'bg-green-100 text-green-700 border-2 border-green-500' : 'bg-blue-600 text-white hover:bg-blue-700 active:scale-95'}`}
+                            >
+                                {isPlayingDoctor ? <Volume2 size={24} className="animate-pulse"/> : <PlayCircle size={24} />}
+                                <div className="text-left">
+                                    <div className="text-lg leading-none">{isPlayingDoctor ? t('डॉक्टर बोल रहे हैं...', 'Dr. Speaking...') : t('डॉक्टर का संदेश सुनाएं', 'Play Doctor Message')}</div>
+                                    <div className="text-[10px] opacity-80 font-normal">{t('परिवार को सुनाएं', 'Make Family Listen')}</div>
+                                </div>
+                            </button>
+                        </div>
+                    )}
+
+                    {/* NEW: Digital Certificate */}
+                    {(riskLevel === 'RED' || riskLevel === 'ORANGE') && (
+                        <div className="w-full bg-yellow-50 border-2 border-yellow-200 p-4 rounded-xl mb-6 text-left relative overflow-hidden">
+                            <div className="absolute top-0 right-0 opacity-10"><FileBadge size={80}/></div>
+                            <h4 className="font-bold text-yellow-900 text-sm uppercase flex items-center gap-2"><Landmark size={14}/> Official Referral</h4>
+                            <p className="text-xs text-yellow-800 mt-1 font-mono">REF-ID: {Date.now().toString().slice(-6)}</p>
+                            <p className="text-xs text-yellow-800 mt-2 font-bold">Authorized by MO, PHC Nandgaon</p>
+                        </div>
+                    )}
+
+                    {(riskLevel === 'RED' || riskLevel === 'ORANGE') && (
+                        <div className="w-full mb-6 animate-in slide-in-from-bottom-4">
+                            {!referralStatus ? (
+                                <button 
+                                    onClick={handleReferral}
+                                    className="w-full bg-red-600 text-white py-4 rounded-xl font-bold text-sm shadow-lg flex items-center justify-center gap-3 active:scale-95 transition-transform hover:bg-red-700 animate-pulse"
+                                >
+                                    <Ambulance size={24} />
+                                    <div className="text-left">
+                                        <div className="text-lg leading-none">{t('रेफरल शुरू करें', 'Initiate Referral')}</div>
+                                        <div className="text-[10px] opacity-80 font-normal">Auto-Alert Ambulance & PHC</div>
+                                    </div>
+                                </button>
+                            ) : referralStatus === 'processing' ? (
+                                <div className="w-full bg-gray-800 text-white py-4 rounded-xl font-bold flex items-center justify-center gap-3">
+                                    <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                                    {t('प्रोसेसिंग...', 'Connecting to Network...')}
+                                </div>
+                            ) : (
+                                <div className="bg-green-50 border border-green-200 p-4 rounded-xl text-left">
+                                    <div className="flex items-center gap-2 text-green-700 font-bold mb-2">
+                                        <Check size={18} /> {t('रेफरल सफल!', 'Referral Confirmed!')}
+                                    </div>
+                                    <div className="space-y-2 text-xs text-gray-600">
+                                        <div className="flex justify-between"><span>Ref ID:</span> <span className="font-mono font-bold">REF-2025-998</span></div>
+                                        <div className="flex justify-between"><span>Ambulance:</span> <span className="font-bold">KA-01-EQ-4422 (Dispatched)</span></div>
+                                        <div className="flex justify-between"><span>PHC Alerted:</span> <span className="font-bold">Dr. Rao (Nandgaon)</span></div>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    <div className="w-full grid grid-cols-2 gap-3 mb-6">
+                        <button onClick={generateDietPlan} disabled={aiLoading} className="bg-green-50 text-green-700 py-3 rounded-xl font-bold text-sm border border-green-200 hover:bg-green-100 transition-colors">{aiLoading ? "..." : "🍎 Diet Plan (AI)"}</button>
+                        <button onClick={generateFamilyScript} disabled={aiLoading} className="bg-indigo-50 text-indigo-700 py-3 rounded-xl font-bold text-sm border border-indigo-200 hover:bg-indigo-100 transition-colors">{aiLoading ? "..." : "👪 Counsel Family"}</button>
+                    </div>
+                    
+                    <button onClick={handleSaveVisit} className="w-full bg-gray-900 text-white py-5 rounded-2xl font-bold shadow-lg active:scale-95 hover:shadow-xl hover:-translate-y-1 transition-all">{t('सेव करें', 'Save & Close')}</button>
+                    <div className="mt-8 text-xs text-gray-400">Government Footer Viewable on Scroll</div>
+                </div>
+                );
+            };
+
+            const isAuthScreen = screen === 'login' || screen === 'signup' || screen === 'splash';
+
+            return (
+                <div className="max-w-md mx-auto h-screen bg-white flex flex-col font-sans overflow-hidden">
+                {!isAuthScreen && (
+                    <Header 
+                        title={screen === 'home' ? 'MAMATA' : screen === 'inventory' ? 'Inventory' : screen === 'training' ? 'ASHA Academy' : screen === 'finance' ? 'My Earnings' : screen === 'support' ? 'Support' : selectedMother?.name || 'Visit'} 
+                        backAction={screen !== 'home' ? () => setScreen('home') : null} 
+                        onMenuClick={() => setScreen('asha_profile')} 
+                    />
+                )}
+                <div className="flex-1 overflow-y-auto bg-gray-50">
+                    {screen === 'login' && renderLogin()}
+                    {screen === 'signup' && renderSignup()}
+                    {screen === 'home' && renderHome()}
+                    {screen === 'inventory' && renderInventory()}
+                    {screen === 'training' && renderTraining()}
+                    {screen === 'finance' && renderFinance()}
+                    {screen === 'asha_profile' && renderAshaProfile()}
+                    {screen === 'profile' && renderDetailedProfile()}
+                    {screen === 'registration' && renderRegistration()}
+                    {screen === 'asdt' && renderASDT()}
+                    {screen === 'symptoms' && renderSymptoms()}
+                    {screen === 'result' && renderResult()}
+                    {screen === 'support' && renderSupport()}
+                </div>
+
+                {screen === 'home' && (
+                    <div className="fixed bottom-24 right-6 z-30">
+                            <button 
+                                onClick={() => setScreen('inventory')}
+                                className="bg-indigo-600 text-white p-3 rounded-full shadow-lg hover:scale-105 active:scale-95 transition-all flex items-center justify-center relative"
+                            >
+                                <Package size={20} />
+                                {Object.values(inventory).some(i => i.count <= i.min) && (
+                                    <span className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full border-2 border-white"></span>
+                                )}
+                            </button>
+                    </div>
+                )}
+
+                {!isAuthScreen && (
+                    <div className="fixed bottom-6 right-6 z-40 animate-in slide-in-from-bottom-12 fade-in delay-500">
+                        <button
+                            onClick={() => setShowChat(true)}
+                            className="group relative flex items-center justify-center rounded-full bg-white shadow-xl shadow-purple-500/30 transition-all hover:scale-105 active:scale-95"
+                        >
+                            <div className="relative flex items-center gap-2 bg-gradient-to-tr from-pink-600 to-purple-700 text-white px-5 py-4 rounded-full border-4 border-white">
+                                <Sparkles className="h-5 w-5 text-yellow-300 animate-spin-slow" fill="currentColor" />
+                                <span className="font-bold text-sm tracking-wide">{t('Ask Didi', 'Ask Didi AI')}</span>
+                            </div>
+                        </button>
+                    </div>
+                )}
+
+                <AskDidiModal isOpen={showChat} onClose={() => setShowChat(false)} lang={lang} />
+                <NotificationOverlay isOpen={showNotifications} onClose={() => setShowNotifications(false)} notifications={allNotifications} />
+                <QrScannerOverlay isOpen={showScanner} onClose={() => setShowScanner(false)} onScan={handleScanSuccess} />
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<MamataAppQr />);
+    </script>
+</body>
+</html>
