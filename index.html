@@ -6,30 +6,56 @@
     <title>Mamata Health App</title>
     
     <script src="https://cdn.tailwindcss.com"></script>
-    
     <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
-    
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     
     <script src="https://unpkg.com/lucide@latest"></script>
     
     <style>
-        /* Custom Animations */
         @keyframes spin-slow { to { transform: rotate(360deg); } }
         .animate-spin-slow { animation: spin-slow 3s linear infinite; }
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        
+        /* Icon sizing fix */
+        i[data-lucide] { display: inline-block; vertical-align: middle; }
     </style>
 </head>
 <body class="bg-gray-50 select-none">
     <div id="root"></div>
 
     <script type="text/babel">
-        // --- SETUP: Connect React and Icons ---
+        // --- ERROR HANDLER (Prevents White Screen) ---
+        window.onerror = function(message, source, lineno, colno, error) {
+            document.getElementById('root').innerHTML = `
+                <div style="color: red; padding: 20px; font-family: sans-serif;">
+                    <h3>Something went wrong</h3>
+                    <p><strong>Error:</strong> ${message}</p>
+                    <p>Check the console (F12) for more details.</p>
+                </div>
+            `;
+        };
+
         const { useState, useEffect, useRef } = React;
-        
-        // Destructure all icons from the global Lucide object
+
+        // --- ICON SYSTEM FIX ---
+        // This Proxy automatically creates an icon component for any name requested
+        const IconSystem = new Proxy({}, {
+            get: (target, prop) => {
+                return ({ size = 24, className = "", color }) => {
+                    // Convert PascalCase (Volume2) to kebab-case (volume-2)
+                    const iconName = prop.replace(/([a-z0-9]|(?=[A-Z]))([A-Z])/g, '$1-$2').toLowerCase();
+                    return React.createElement('i', {
+                        'data-lucide': iconName.replace(/^-/, ''), // remove leading dash if any
+                        className: className,
+                        style: { width: size, height: size, color: color }
+                    });
+                };
+            }
+        });
+
+        // Use our safe IconSystem instead of the raw library
         const { 
             Volume2, Check, AlertTriangle, ChevronRight, Menu, Save, Activity, Phone, Plus, Users, 
             Calendar, Sparkles, X, MessageCircle, ArrowLeft, Heart, Mic, Send, Award, TrendingUp, 
@@ -40,7 +66,7 @@
             Ambulance, Link, PlayCircle, Video, Gamepad2, GraduationCap, Star, Headphones, 
             Wallet, Banknote, CreditCard, CheckCircle, ShieldAlert, FileBadge, Megaphone, 
             HeartHandshake, Baby, Briefcase, Umbrella, Droplet 
-        } = lucide;
+        } = IconSystem;
 
         // --- CONFIGURATION ---
         const RISK_WEIGHTS = {
@@ -125,12 +151,15 @@
             { id: 3, name: "Radha Singh", age: 35, weeks: 24, lastVisit: "1 week ago", image: "RS", history: "G4P3", village: "Nandgaon", phone: "9876543212", risk: "moderate", anemia: "mild", address: "Main Road, Nandgaon", lmp: "2025-06-15", edd: "2026-03-22", weight: "60", bp: "130/85", hemoglobin: "10.1" },
         ];
 
-        // *** IMPORTANT: PASTE YOUR GEMINI API KEY HERE ***
+        // *** API KEY ***
         const apiKey = ""; 
 
         // --- API HELPERS ---
         const callGeminiText = async (prompt) => {
-            if (!apiKey) return "Please add your API Key in the code to use AI.";
+            if (!apiKey) {
+                console.warn("API Key missing");
+                return "Demo Mode: Add API Key to code for real AI.";
+            }
             try {
                 const response = await fetch(
                     `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
@@ -143,11 +172,7 @@
         };
 
         const callGeminiTTS = async (text, lang) => {
-            if (!apiKey) return null;
-            try {
-                // Not implemented in this demo version without a backend proxy usually
-                return null;
-            } catch (e) { return null; }
+            return null; // Demo placeholder
         };
 
         // --- COMPONENTS ---
@@ -485,6 +510,13 @@
             const [signupForm, setSignupForm] = useState({ name: '', phone: '', ashaId: '', pin: '', confirmPin: '', otp: '' });
             const [otpSent, setOtpSent] = useState(false);
             const [isOtpLoading, setIsOtpLoading] = useState(false);
+            
+            // *** ICON FIX: Auto-render new icons ***
+            useEffect(() => {
+                if (window.lucide) {
+                    window.lucide.createIcons();
+                }
+            });
 
             const t = (hi, en) => (lang === 'hi' ? hi : en);
 
@@ -858,7 +890,7 @@
                 </div>
             );
 
-            // RENDER FUNCTIONS (Shortened slightly for clarity in this single-file view, logic identical)
+            // RENDER FUNCTIONS
             
             const renderInventory = () => (
                 <div key="inventory" className="p-4 space-y-4 pb-24 animate-in slide-in-from-right-full duration-500">
@@ -961,7 +993,6 @@
                 );
             };
 
-            // [Additional render functions like renderHome, renderLogin etc are included in logic flow, simplifying here for the single file structure but all logic is preserved in the components]
             const renderRegistration = () => (
                 <div key="registration" className="p-4 space-y-4 pb-24 animate-in slide-in-from-bottom-8 duration-500">
                     <div className="bg-purple-100 p-4 rounded-xl border border-purple-200 mb-4">
@@ -1021,7 +1052,7 @@
                 </div>
             );
 
-            // Simplified Routing Logic for the Single File
+            // Routing Logic
             const renderContent = () => {
                 switch(screen) {
                     case 'login': return (
