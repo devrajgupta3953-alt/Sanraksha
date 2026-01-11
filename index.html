@@ -768,13 +768,14 @@
 
         // --- COMPONENTS ---
         
-        const CustomLogo = ({ className }) => (
-            <img 
-                src="c:\Users\devra\OneDrive\Pictures\wallpaper\enhance the stylized2.png" /* <--- PASTE YOUR LOGO URL HERE */
-                alt="App Logo"
-                className={`${className} object-contain`} 
-            />
+           const CustomLogo = ({ className }) => (
+          <img
+            src="logo.png"
+            alt="App Logo"
+             className={`${className} object-contain`}
+          />
         );
+
 
         const AskDidiModal = ({ isOpen, onClose, lang }) => {
             const [query, setQuery] = useState("");
@@ -3475,4 +3476,5 @@
         root.render(<SanrakshaApp />);
     </script>
 </body>
+
 </html>
